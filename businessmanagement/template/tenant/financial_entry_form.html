@@ -1,0 +1,33 @@
+{% extends "tenant/base.html" %}
+
+{% block title %}Nuevo movimiento | System Manager{% endblock %}
+
+{% block workspace_content %}
+<div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-4">
+	<div>
+		<div class="sidebar-kicker">Operacion financiera</div>
+		<h2 class="h2 mb-1">{{ page_title|default:'Nuevo movimiento' }}</h2>
+		<p class="text-secondary mb-0">Empresa actual: {{ business.business_name }}</p>
+	</div>
+</div>
+
+<form method="post" enctype="multipart/form-data" class="panel-card">
+	{% csrf_token %}
+	{% if form.non_field_errors %}
+		<div class="alert alert-danger" role="alert">{{ form.non_field_errors }}</div>
+	{% endif %}
+	<div class="row g-3">
+		{% for field in form %}
+			<div class="{% if field.name == 'notes' %}col-12{% else %}col-md-6{% endif %}">
+				<label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+				{{ field }}
+				{{ field.errors }}
+			</div>
+		{% endfor %}
+	</div>
+	<div class="d-flex justify-content-between gap-2 flex-wrap mt-4">
+		<a href="{% url 'financial_entry_list' %}" class="btn btn-outline-secondary">Volver</a>
+		<button type="submit" class="btn btn-sm-brand">{{ submit_label|default:'Guardar movimiento' }}</button>
+	</div>
+</form>
+{% endblock %}

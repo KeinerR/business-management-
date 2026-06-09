@@ -1,0 +1,97 @@
+{% extends "tenant/base.html" %} {% block title %}Registrar pago | System
+Manager{% endblock %} {% block workspace_content %}
+<div class="container mt-4">
+  <div class="row mb-3">
+    <div class="col-md-8">
+      <h2 class="h4 fw-bold mb-1">Registrar pago</h2>
+      {% if financial_entry %}
+      <p class="text-muted mb-0">
+        Movimiento: <strong>{{ financial_entry.concept }}</strong> ({{ financial_entry.get_entry_type_display }})
+      </p>
+      {% endif %}
+    </div>
+    <div class="col-md-4 text-end">
+      <a
+        href="{% url 'payment_list' %}?financial_entry={{ financial_entry.id }}"
+        class="btn btn-secondary"
+      >
+        <i class="bi bi-arrow-left"></i> Volver
+      </a>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body">
+      {% if error %}
+      <div class="alert alert-danger">{{ error }}</div>
+      {% endif %}
+
+      <div class="alert alert-warning">
+        <div class="d-flex justify-content-between">
+          <div>
+            <strong>Pendiente estimado</strong>
+            <div class="text-muted">
+              {{ remaining_to_pay }} {{ financial_entry.currency }}
+            </div>
+          </div>
+          <div class="text-end">
+            <strong>Moneda del pago</strong>
+            <div class="text-muted">Conversión habilitada</div>
+          </div>
+        </div>
+      </div>
+
+      <form method="post" novalidate>
+        {% csrf_token %}
+
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label">{{ form.payment_date.label }}</label>
+            {{ form.payment_date }} {% if form.payment_date.errors %}
+            <div class="text-danger small">
+              {{ form.payment_date.errors.0 }}
+            </div>
+            {% endif %}
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">{{ form.currency.label }}</label>
+            {{ form.currency }} {% if form.currency.errors %}
+            <div class="text-danger small">{{ form.currency.errors.0 }}</div>
+            {% endif %}
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label">{{ form.amount.label }}</label>
+            {{ form.amount }} {% if form.amount.errors %}
+            <div class="text-danger small">{{ form.amount.errors.0 }}</div>
+            {% endif %}
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label">{{ form.concept.label }}</label>
+            {{ form.concept }} {% if form.concept.errors %}
+            <div class="text-danger small">{{ form.concept.errors.0 }}</div>
+            {% endif %}
+          </div>
+
+          <div class="col-12">
+            <label class="form-label">{{ form.notes.label }}</label>
+            {{ form.notes }} {% if form.notes.errors %}
+            <div class="text-danger small">{{ form.notes.errors.0 }}</div>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="d-flex justify-content-between mt-4">
+          <button type="submit" class="btn btn-primary">
+            <i class="bi bi-check-circle"></i> Guardar pago
+          </button>
+          <a href="{% url 'payment_list' %}" class="btn btn-outline-secondary">
+            <i class="bi bi-list"></i> Ver todos
+          </a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

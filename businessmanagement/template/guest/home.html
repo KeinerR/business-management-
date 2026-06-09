@@ -1,0 +1,584 @@
+{% extends "base.html" %}
+
+{% block title %}SystemManager | Gestion multiempresa{% endblock %}
+
+{% block main_class %}app-main p-0{% endblock %}
+
+{% block extra_css %}
+<style>
+	.guest-home {
+		background:
+			linear-gradient(180deg, #ffffff 0%, #f6f8f7 46%, #eef3f1 100%);
+		color: var(--sm-ink);
+	}
+
+	.guest-container {
+		width: min(1180px, calc(100% - 2rem));
+		margin-inline: auto;
+	}
+
+	.guest-hero {
+		min-height: calc(100vh - 112px);
+		display: grid;
+		align-items: center;
+		padding: clamp(2rem, 5vw, 4.5rem) 0 2rem;
+	}
+
+	.hero-panel {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		gap: clamp(1.4rem, 3vw, 2rem);
+	}
+
+	.hero-copy {
+		max-width: 860px;
+	}
+
+	.eyebrow {
+		display: inline-flex;
+		align-items: center;
+		gap: .5rem;
+		border: 1px solid #cddbd8;
+		border-radius: 999px;
+		background: #fff;
+		color: var(--sm-brand-dark);
+		font-size: .82rem;
+		font-weight: 800;
+		padding: .42rem .75rem;
+		text-transform: uppercase;
+	}
+
+	.eyebrow::before {
+		content: "";
+		width: .5rem;
+		height: .5rem;
+		border-radius: 50%;
+		background: var(--sm-accent);
+	}
+
+	.hero-title {
+		font-size: clamp(2.5rem, 7vw, 5.25rem);
+		font-weight: 800;
+		line-height: .98;
+		margin: 1.15rem 0 1rem;
+		max-width: 980px;
+	}
+
+	.hero-lead {
+		color: var(--sm-muted);
+		font-size: clamp(1rem, 2vw, 1.2rem);
+		line-height: 1.65;
+		max-width: 760px;
+		margin: 0;
+	}
+
+	.hero-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: .75rem;
+		margin-top: 1.5rem;
+	}
+
+	.btn-guest-primary,
+	.btn-guest-secondary {
+		border-radius: 8px;
+		font-weight: 800;
+		padding: .82rem 1rem;
+	}
+
+	.btn-guest-primary {
+		background: var(--sm-brand);
+		border: 1px solid var(--sm-brand);
+		color: #fff;
+	}
+
+	.btn-guest-primary:hover {
+		background: var(--sm-brand-dark);
+		border-color: var(--sm-brand-dark);
+		color: #fff;
+	}
+
+	.btn-guest-secondary {
+		background: #fff;
+		border: 1px solid #cbd8d5;
+		color: var(--sm-ink);
+	}
+
+	.btn-guest-secondary:hover {
+		border-color: var(--sm-brand);
+		color: var(--sm-brand-dark);
+	}
+
+	.product-console {
+		border: 1px solid #cad9d6;
+		border-radius: 8px;
+		background: #fff;
+		box-shadow: var(--sm-shadow);
+		overflow: hidden;
+	}
+
+	.console-topbar {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		border-bottom: 1px solid var(--sm-line);
+		background: #f9fbfa;
+		padding: .8rem 1rem;
+	}
+
+	.console-brand {
+		display: flex;
+		align-items: center;
+		gap: .6rem;
+		font-weight: 800;
+		color: var(--sm-brand-dark);
+	}
+
+	.console-mark {
+		width: 1rem;
+		height: 1rem;
+		border-radius: 4px;
+		background: linear-gradient(135deg, var(--sm-brand), var(--sm-blue));
+	}
+
+	.console-status {
+		color: var(--sm-muted);
+		font-size: .88rem;
+	}
+
+	.console-grid {
+		display: grid;
+		grid-template-columns: 220px minmax(0, 1fr);
+		min-height: 390px;
+	}
+
+	.console-sidebar {
+		border-right: 1px solid var(--sm-line);
+		background: #f5f8f7;
+		padding: 1rem;
+	}
+
+	.console-link {
+		display: flex;
+		justify-content: space-between;
+		gap: .75rem;
+		border-radius: 8px;
+		color: var(--sm-ink);
+		font-weight: 700;
+		padding: .7rem .75rem;
+	}
+
+	.console-link.is-active {
+		background: #e6f0ee;
+		color: var(--sm-brand-dark);
+	}
+
+	.console-main {
+		padding: 1rem;
+	}
+
+	.console-metrics {
+		display: grid;
+		grid-template-columns: repeat(4, minmax(0, 1fr));
+		gap: .75rem;
+		margin-bottom: .9rem;
+	}
+
+	.console-metric,
+	.console-table,
+	.console-feed {
+		border: 1px solid var(--sm-line);
+		border-radius: 8px;
+		background: #fff;
+	}
+
+	.console-metric {
+		padding: .85rem;
+	}
+
+	.console-metric span {
+		display: block;
+		color: var(--sm-muted);
+		font-size: .78rem;
+		font-weight: 700;
+	}
+
+	.console-metric strong {
+		display: block;
+		color: var(--sm-brand-dark);
+		font-size: 1.45rem;
+		line-height: 1.1;
+		margin-top: .35rem;
+	}
+
+	.console-content-grid {
+		display: grid;
+		grid-template-columns: minmax(0, 1.35fr) minmax(240px, .65fr);
+		gap: .75rem;
+	}
+
+	.console-table {
+		overflow: hidden;
+	}
+
+	.console-table-row {
+		display: grid;
+		grid-template-columns: 1fr 120px 92px;
+		gap: .75rem;
+		border-bottom: 1px solid var(--sm-line);
+		padding: .78rem .85rem;
+		font-size: .9rem;
+	}
+
+	.console-table-row:last-child {
+		border-bottom: 0;
+	}
+
+	.console-table-row.is-head {
+		background: #f7faf9;
+		color: var(--sm-muted);
+		font-size: .78rem;
+		font-weight: 800;
+		text-transform: uppercase;
+	}
+
+	.console-feed {
+		padding: .9rem;
+	}
+
+	.feed-item {
+		border-bottom: 1px solid var(--sm-line);
+		padding: .65rem 0;
+	}
+
+	.feed-item:first-child {
+		padding-top: 0;
+	}
+
+	.feed-item:last-child {
+		border-bottom: 0;
+		padding-bottom: 0;
+	}
+
+	.feed-item strong {
+		display: block;
+		font-size: .92rem;
+	}
+
+	.feed-item span {
+		color: var(--sm-muted);
+		font-size: .82rem;
+	}
+
+	.section-band {
+		padding: clamp(2.2rem, 6vw, 4.5rem) 0;
+	}
+
+	.section-heading {
+		max-width: 760px;
+		margin-bottom: 1.25rem;
+	}
+
+	.section-kicker {
+		color: var(--sm-brand-dark);
+		font-size: .8rem;
+		font-weight: 800;
+		text-transform: uppercase;
+	}
+
+	.section-heading h2 {
+		font-size: clamp(1.8rem, 4vw, 3rem);
+		font-weight: 800;
+		line-height: 1.05;
+		margin: .35rem 0 .65rem;
+	}
+
+	.section-heading p {
+		color: var(--sm-muted);
+		line-height: 1.65;
+		margin: 0;
+	}
+
+	.capability-grid {
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: .9rem;
+	}
+
+	.capability-card {
+		border: 1px solid var(--sm-line);
+		border-radius: 8px;
+		background: #fff;
+		padding: 1rem;
+		min-height: 168px;
+	}
+
+	.capability-card h3 {
+		font-size: 1rem;
+		font-weight: 800;
+		margin-bottom: .5rem;
+	}
+
+	.capability-card p {
+		color: var(--sm-muted);
+		line-height: 1.55;
+		margin: 0;
+	}
+
+	.flow-grid {
+		display: grid;
+		grid-template-columns: repeat(4, minmax(0, 1fr));
+		gap: .75rem;
+	}
+
+	.flow-step {
+		border-left: 3px solid var(--sm-brand);
+		background: #fff;
+		padding: 1rem;
+		min-height: 142px;
+	}
+
+	.flow-step span {
+		color: var(--sm-accent);
+		font-size: .78rem;
+		font-weight: 800;
+	}
+
+	.flow-step h3 {
+		font-size: 1rem;
+		font-weight: 800;
+		margin: .45rem 0;
+	}
+
+	.flow-step p {
+		color: var(--sm-muted);
+		margin: 0;
+	}
+
+	.guest-cta {
+		border-top: 1px solid var(--sm-line);
+		background: #fff;
+		padding: clamp(2rem, 5vw, 3.5rem) 0;
+	}
+
+	.cta-panel {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		border: 1px solid #cad9d6;
+		border-radius: 8px;
+		padding: clamp(1rem, 3vw, 1.5rem);
+		background: #f8faf9;
+	}
+
+	.cta-panel h2 {
+		font-size: clamp(1.35rem, 3vw, 2rem);
+		font-weight: 800;
+		margin: 0 0 .35rem;
+	}
+
+	.cta-panel p {
+		color: var(--sm-muted);
+		margin: 0;
+	}
+
+	@media (max-width: 991.98px) {
+		.console-grid,
+		.console-content-grid,
+		.capability-grid,
+		.flow-grid {
+			grid-template-columns: 1fr;
+		}
+
+		.console-sidebar {
+			display: none;
+		}
+
+		.console-metrics {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+	}
+
+	@media (max-width: 575.98px) {
+		.guest-container {
+			width: min(100% - 1rem, 1180px);
+		}
+
+		.hero-actions,
+		.cta-panel {
+			align-items: stretch;
+			flex-direction: column;
+		}
+
+		.btn-guest-primary,
+		.btn-guest-secondary {
+			width: 100%;
+		}
+
+		.console-table-row {
+			grid-template-columns: 1fr;
+			gap: .25rem;
+		}
+	}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="guest-home">
+	<section class="guest-hero">
+		<div class="guest-container">
+			<div class="hero-panel">
+				<div class="hero-copy">
+					<div class="eyebrow">SaaS multiempresa</div>
+					<h1 class="hero-title">SystemManager</h1>
+					<p class="hero-lead">
+						Una plataforma para operar empresas tenant con finanzas, usuarios, roles, terceros, tasas y auditoria desde un entorno rapido, claro y preparado para crecer.
+					</p>
+					<div class="hero-actions">
+						<a class="btn btn-guest-primary" href="{% url 'login' %}">Ingresar al sistema</a>
+						<a class="btn btn-guest-secondary" href="#operacion">Ver alcance operativo</a>
+					</div>
+				</div>
+
+				<div class="product-console" aria-label="Vista previa de SystemManager">
+					<div class="console-topbar">
+						<div class="console-brand"><span class="console-mark"></span>SystemManager</div>
+						<div class="console-status">Tenant operativo · Public master online</div>
+					</div>
+					<div class="console-grid">
+						<aside class="console-sidebar">
+							<div class="console-link is-active"><span>Resumen</span><small>Inicio</small></div>
+							<div class="console-link"><span>Finanzas</span><small>Movs.</small></div>
+							<div class="console-link"><span>Terceros</span><small>CRM</small></div>
+							<div class="console-link"><span>Usuarios</span><small>Roles</small></div>
+							<div class="console-link"><span>Auditoria</span><small>Logs</small></div>
+						</aside>
+						<div class="console-main">
+							<div class="console-metrics">
+								<div class="console-metric"><span>Tenants</span><strong>12</strong></div>
+								<div class="console-metric"><span>Movimientos</span><strong>384</strong></div>
+								<div class="console-metric"><span>Pendientes</span><strong>27</strong></div>
+								<div class="console-metric"><span>Usuarios</span><strong>64</strong></div>
+							</div>
+							<div class="console-content-grid">
+								<div class="console-table">
+									<div class="console-table-row is-head">
+										<span>Operacion</span><span>Moneda</span><span>Estado</span>
+									</div>
+									<div class="console-table-row">
+										<span>Venta diaria sucursal norte</span><span>COP</span><span>Pagado</span>
+									</div>
+									<div class="console-table-row">
+										<span>Cuenta por cobrar distribuidor</span><span>USD</span><span>Parcial</span>
+									</div>
+									<div class="console-table-row">
+										<span>Pago proveedor tecnologia</span><span>EUR</span><span>Pendiente</span>
+									</div>
+									<div class="console-table-row">
+										<span>Tasa Binance P2P registrada</span><span>USDT</span><span>Activo</span>
+									</div>
+								</div>
+								<div class="console-feed">
+									<div class="feed-item">
+										<strong>Auditoria activa</strong>
+										<span>Empleado creado por admin</span>
+									</div>
+									<div class="feed-item">
+										<strong>Tenant aislado</strong>
+										<span>Schema dedicado por empresa</span>
+									</div>
+									<div class="feed-item">
+										<strong>Roles base</strong>
+										<span>Admin, operador y lectura</span>
+									</div>
+								</div>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<section id="operacion" class="section-band">
+		<div class="guest-container">
+			<div class="section-heading">
+				<div class="section-kicker">Operacion diaria</div>
+				<h2>Los modulos clave quedan cerca de la accion.</h2>
+				<p>La experiencia guest comunica lo que el producto ya hace: separar tenants, operar usuarios y capturar datos financieros sin perder trazabilidad.</p>
+			</div>
+			<div class="capability-grid">
+				<article class="capability-card">
+					<h3>Panel master</h3>
+					<p>Creacion de tenants, dominios, empresa base, administrador inicial y supervision global de actividad.</p>
+				</article>
+				<article class="capability-card">
+					<h3>Workspace tenant</h3>
+					<p>Dashboard interno con empleados, usuarios, grupos, terceros, tasas, movimientos y auditoria.</p>
+				</article>
+				<article class="capability-card">
+					<h3>Finanzas esenciales</h3>
+					<p>Ingresos, egresos, cuentas por cobrar, cuentas por pagar, estados y totales por moneda.</p>
+				</article>
+				<article class="capability-card">
+					<h3>Control de acceso</h3>
+					<p>Roles base por tenant y grupos personalizados para ordenar el alcance de cada usuario.</p>
+				</article>
+				<article class="capability-card">
+					<h3>Terceros</h3>
+					<p>Directorio de clientes y proveedores conectado a los movimientos operativos.</p>
+				</article>
+				<article class="capability-card">
+					<h3>Auditoria</h3>
+					<p>Eventos criticos registrados para seguimiento de bootstrap, empleados, tasas, grupos y finanzas.</p>
+				</article>
+			</div>
+		</div>
+	</section>
+
+	<section class="section-band pt-0">
+		<div class="guest-container">
+			<div class="section-heading">
+				<div class="section-kicker">Modelo de trabajo</div>
+				<h2>De la plataforma publica al schema de cada empresa.</h2>
+			</div>
+			<div class="flow-grid">
+				<article class="flow-step">
+					<span>01</span>
+					<h3>Aprovisionar</h3>
+					<p>El master crea tenant, dominio, empresa y usuario administrador.</p>
+				</article>
+				<article class="flow-step">
+					<span>02</span>
+					<h3>Asignar acceso</h3>
+					<p>El tenant define empleados, usuarios y grupos de operacion.</p>
+				</article>
+				<article class="flow-step">
+					<span>03</span>
+					<h3>Operar</h3>
+					<p>El equipo registra terceros, tasas y movimientos financieros.</p>
+				</article>
+				<article class="flow-step">
+					<span>04</span>
+					<h3>Supervisar</h3>
+					<p>Los dashboards muestran KPIs, pendientes, actividad y trazabilidad.</p>
+				</article>
+			</div>
+		</div>
+	</section>
+
+	<section class="guest-cta">
+		<div class="guest-container">
+			<div class="cta-panel">
+				<div>
+					<h2>Acceso operativo para administradores y tenants.</h2>
+					<p>Entra desde el dominio correcto: public para plataforma, tenant para empresa.</p>
+				</div>
+				<a class="btn btn-guest-primary" href="{% url 'login' %}">Entrar ahora</a>
+			</div>
+		</div>
+	</section>
+</div>
+{% endblock %}

@@ -1,0 +1,159 @@
+{% extends "tenant/base.html" %}
+
+{% block title %}Crear empleado | System Manager{% endblock %}
+
+{% block workspace_css %}
+<style>
+	.employee-form-shell {
+		display: grid;
+		gap: 1rem;
+	}
+
+	.employee-form-card {
+		border: 1px solid var(--sm-line);
+		border-radius: 8px;
+		background: #fff;
+		overflow: hidden;
+	}
+
+	.employee-form-header {
+		border-bottom: 1px solid var(--sm-line);
+		background: var(--sm-panel);
+		padding: 1rem;
+	}
+
+	.employee-form-header h1 {
+		font-size: 1.7rem;
+		font-weight: 800;
+		margin: 0 0 .3rem;
+	}
+
+	.employee-form {
+		padding: 1rem;
+	}
+
+	.employee-form .form-label {
+		font-weight: 800;
+		font-size: .9rem;
+	}
+
+	.employee-actions {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 1rem;
+		flex-wrap: wrap;
+		border-top: 1px solid var(--sm-line);
+		margin-top: 1rem;
+		padding-top: 1rem;
+	}
+
+	.role-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+		gap: .65rem;
+	}
+
+	.role-grid label {
+		display: flex;
+		align-items: center;
+		gap: .55rem;
+		border: 1px solid var(--sm-line);
+		border-radius: 8px;
+		background: #fff;
+		padding: .7rem .8rem;
+		font-weight: 700;
+	}
+
+	.role-grid input {
+		margin: 0;
+	}
+</style>
+{% endblock %}
+
+{% block workspace_content %}
+<div class="employee-form-shell">
+	<div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+		<div>
+			<div class="sidebar-kicker">Gestion de equipo</div>
+			<h2 class="h2 mb-1">Crear empleado</h2>
+			<p class="text-secondary mb-0">Empresa actual: {{ business.business_name }}</p>
+		</div>
+		<a href="{% url 'employee_list' %}" class="btn btn-outline-secondary">Ver empleados</a>
+	</div>
+
+	<div class="employee-form-card">
+		<div class="employee-form-header">
+			<h1>Datos de acceso y perfil</h1>
+			<p class="text-secondary mb-0">El usuario se crea dentro del schema de esta empresa tenant.</p>
+		</div>
+
+		<form method="post" class="employee-form">
+			{% csrf_token %}
+
+			{% if form.non_field_errors %}
+				<div class="alert alert-danger" role="alert">
+					{% for error in form.non_field_errors %}
+						<div>{{ error }}</div>
+					{% endfor %}
+				</div>
+			{% endif %}
+
+			<div class="row g-3">
+				<div class="col-md-6">
+					<label class="form-label" for="id_username">Usuario</label>
+					{{ form.username }}
+					{{ form.username.errors }}
+				</div>
+				<div class="col-md-6">
+					<label class="form-label" for="id_email">Email</label>
+					{{ form.email }}
+					{{ form.email.errors }}
+				</div>
+				<div class="col-md-6">
+					<label class="form-label" for="id_password1">Contrasena</label>
+					{{ form.password1 }}
+					{{ form.password1.errors }}
+				</div>
+				<div class="col-md-6">
+					<label class="form-label" for="id_password2">Confirmar contrasena</label>
+					{{ form.password2 }}
+					{{ form.password2.errors }}
+				</div>
+				<div class="col-md-6">
+					<label class="form-label" for="id_first_name">Nombre</label>
+					{{ form.first_name }}
+					{{ form.first_name.errors }}
+				</div>
+				<div class="col-md-6">
+					<label class="form-label" for="id_last_name">Apellido</label>
+					{{ form.last_name }}
+					{{ form.last_name.errors }}
+				</div>
+				<div class="col-md-6">
+					<label class="form-label" for="id_phone">Telefono</label>
+					{{ form.phone }}
+					{{ form.phone.errors }}
+				</div>
+				<div class="col-md-6">
+					<label class="form-label" for="id_position">Cargo</label>
+					{{ form.position }}
+					{{ form.position.errors }}
+				</div>
+				<div class="col-12">
+					<label class="form-label">Roles del tenant</label>
+					<div class="role-grid">
+						{{ form.groups }}
+					</div>
+					{{ form.groups.errors }}
+				</div>
+			</div>
+
+			<div class="employee-actions">
+				<a href="{% url 'dashboard' %}" class="btn btn-outline-secondary">Volver</a>
+				<button type="submit" class="btn btn-sm-brand">Guardar empleado</button>
+			</div>
+		</form>
+	</div>
+</div>
+{% endblock %}

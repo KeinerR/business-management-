@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+
+{% block main_class %}container-fluid px-3 px-lg-4 py-4{% endblock %}
+
+{% block extra_css %}
+<style>
+	.platform-layout {
+		display: grid;
+		grid-template-columns: 272px minmax(0, 1fr);
+		gap: 1rem;
+	}
+
+	.platform-sidebar,
+	.platform-main,
+	.platform-card {
+		border: 1px solid var(--sm-line);
+		background: #fff;
+		border-radius: 8px;
+	}
+
+	.platform-sidebar {
+		position: sticky;
+		top: 1rem;
+		align-self: start;
+		padding: 1rem;
+		box-shadow: 0 8px 22px rgba(23, 33, 31, .04);
+	}
+
+	.platform-main {
+		padding: 1.25rem;
+		min-height: calc(100vh - 11rem);
+		box-shadow: 0 8px 22px rgba(23, 33, 31, .04);
+	}
+
+	.platform-link {
+		display: flex;
+		justify-content: space-between;
+		gap: .75rem;
+		padding: .72rem .85rem;
+		border-radius: 8px;
+		color: var(--sm-ink);
+		text-decoration: none;
+		font-weight: 700;
+		align-items: center;
+	}
+
+	.platform-link:hover {
+		background: var(--sm-soft);
+		color: var(--sm-brand-dark);
+	}
+
+	.platform-link small {
+		color: var(--sm-muted);
+		font-weight: 800;
+	}
+
+	.platform-kicker {
+		color: var(--sm-brand-dark);
+		font-size: .78rem;
+		font-weight: 800;
+		text-transform: uppercase;
+	}
+
+	.platform-card {
+		padding: 1rem;
+	}
+
+	.metric-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+		gap: .85rem;
+	}
+
+	.metric-value {
+		color: var(--sm-brand-dark);
+		font-size: 2rem;
+		font-weight: 800;
+		line-height: 1;
+	}
+
+	.table thead th {
+		color: var(--sm-muted);
+		font-size: .78rem;
+		text-transform: uppercase;
+	}
+
+	@media (max-width: 991.98px) {
+		.platform-layout {
+			grid-template-columns: 1fr;
+		}
+
+		.platform-sidebar {
+			position: static;
+		}
+	}
+</style>
+{% block platform_css %}{% endblock %}
+{% endblock %}
+
+{% block content %}
+<div class="platform-layout">
+	<aside class="platform-sidebar">
+		<div class="platform-kicker">Superadmin</div>
+		<h1 class="h4 mb-1">Plataforma</h1>
+		<p class="text-secondary small mb-3">Gestion global de tenants, dominios y empresas base.</p>
+		<a class="platform-link" href="{% url 'platform_dashboard' %}"><span>Resumen</span><small>Global</small></a>
+		<a class="platform-link" href="{% url 'platform_tenant_list' %}"><span>Tenants</span><small>Empresas</small></a>
+		<a class="platform-link" href="{% url 'platform_tenant_create' %}"><span>Crear tenant</span><small>Nuevo</small></a>
+	</aside>
+
+	<section class="platform-main">
+		{% block platform_content %}{% endblock %}
+	</section>
+</div>
+{% endblock %}

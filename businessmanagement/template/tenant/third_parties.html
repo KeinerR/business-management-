@@ -1,0 +1,140 @@
+{% extends "tenant/base.html" %}
+
+{% block title %}Terceros | System Manager{% endblock %}
+
+{% block workspace_content %}
+<div class="mb-4">
+	<div class="d-flex justify-content-between align-items-center mb-4">
+		<div>
+			<h2 class="h3 fw-bold mb-2">
+				<i class="bi bi-building"></i> Clientes y Proveedores
+			</h2>
+			<p class="text-muted mb-0">Directorio de terceros para asociar movimientos, cobros y pagos</p>
+		</div>
+		<a class="btn btn-primary" href="{% url 'third_party_create' %}">
+			<i class="bi bi-plus-circle"></i> Nuevo Tercero
+		</a>
+	</div>
+</div>
+
+<div class="card shadow-sm border-0">
+	<div class="card-body p-0">
+		{% if third_parties %}
+			<div class="table-responsive">
+				<table class="table table-hover align-middle mb-0">
+					<thead class="table-light border-bottom-2">
+						<tr>
+							<th class="ps-4 fw-bold text-muted">Nombre</th>
+							<th class="fw-bold text-muted">Tipo</th>
+							<th class="fw-bold text-muted">Email</th>
+							<th class="fw-bold text-muted">Teléfono</th>
+							<th class="fw-bold text-muted">Estado</th>
+							<th class="text-center fw-bold text-muted pe-4">Acciones</th>
+						</tr>
+					</thead>
+					<tbody>
+						{% for third_party in third_parties %}
+							<tr class="border-bottom">
+								<td class="ps-4">
+									<div class="fw-semibold text-dark">{{ third_party.name }}</div>
+									{% if third_party.company_id %}
+										<small class="text-muted">RIF/NIT: {{ third_party.company_id }}</small>
+									{% endif %}
+								</td>
+								<td>
+									<span class="badge bg-info bg-opacity-10 text-info rounded-pill">
+										{{ third_party.get_third_party_type_display }}
+									</span>
+								</td>
+								<td>
+									{% if third_party.email %}
+										<a href="mailto:{{ third_party.email }}" class="text-decoration-none">{{ third_party.email }}</a>
+									{% else %}
+										<span class="text-muted">-</span>
+									{% endif %}
+								</td>
+								<td>
+									{% if third_party.phone %}
+										<a href="tel:{{ third_party.phone }}" class="text-decoration-none">{{ third_party.phone }}</a>
+									{% else %}
+										<span class="text-muted">-</span>
+									{% endif %}
+								</td>
+								<td>
+									{% if third_party.is_active %}
+										<span class="badge bg-success">
+											<i class="bi bi-check-circle"></i> Activo
+										</span>
+									{% else %}
+										<span class="badge bg-secondary">
+											<i class="bi bi-x-circle"></i> Inactivo
+										</span>
+									{% endif %}
+								</td>
+								<td class="pe-4">
+									<div class="btn-group btn-group-sm" role="group">
+										<a class="btn btn-outline-primary" href="{% url 'third_party_edit' third_party.id %}">
+											<i class="bi bi-pencil"></i> Editar
+										</a>
+										<form method="post" action="{% url 'third_party_toggle_active' third_party.id %}" style="display:inline">
+											{% csrf_token %}
+											<button class="btn btn-outline-{% if third_party.is_active %}danger{% else %}success{% endif %}" type="submit">
+												<i class="bi bi-{% if third_party.is_active %}lock{% else %}unlock{% endif %}"></i>
+												{% if third_party.is_active %}Inhabilitar{% else %}Habilitar{% endif %}
+											</button>
+										</form>
+									</div>
+								</td>
+							</tr>
+						{% endfor %}
+					</tbody>
+				</table>
+			</div>
+		{% else %}
+			<div class="text-center py-5">
+				<i class="bi bi-inbox" style="font-size: 3rem; color: #dee2e6;"></i>
+				<p class="text-muted mt-3 mb-3">No hay terceros registrados aún</p>
+				<a href="{% url 'third_party_create' %}" class="btn btn-primary btn-sm">
+					<i class="bi bi-plus-circle"></i> Crear el primer tercero
+				</a>
+			</div>
+		{% endif %}
+	</div>
+</div>
+
+<style>
+	.table-light {
+		background-color: #f8f9fa !important;
+	}
+	
+	.border-bottom-2 {
+		border-bottom: 2px solid #dee2e6 !important;
+	}
+	
+	.btn-group-sm .btn {
+		font-size: 0.875rem;
+		padding: 0.375rem 0.75rem;
+	}
+	
+	.card {
+		transition: all 0.3s ease;
+	}
+	
+	.card:hover {
+		box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15) !important;
+	}
+	
+	tbody tr {
+		transition: background-color 0.2s ease;
+	}
+	
+	tbody tr:hover {
+		background-color: #f8f9fa;
+	}
+	
+	.bg-opacity-10 {
+		opacity: 0.1;
+	}
+</style>
+{% endblock %}
+

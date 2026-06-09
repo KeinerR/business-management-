@@ -1,0 +1,92 @@
+{% extends "tenant/base.html" %}
+{% block content %}
+<div class="container mt-4">
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <h3>Conciliación - Sugerencias</h3>
+    <div>
+      <a class="btn btn-outline-primary btn-sm" href="{% url 'bank_statement_import_csv' %}">Importar otro extracto</a>
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <div><strong>Cuenta:</strong> {{ statement.bank_account.name|default:"(sin nombre)" }}</div>
+      <div><strong>Moneda base:</strong> {{ statement.bank_account.base_currency|default:"" }}</div>
+      <div><strong>Fecha desde:</strong> {{ statement.statement_date_from|default:"-" }}</div>
+      <div><strong>Fecha hasta:</strong> {{ statement.statement_date_to|default:"-" }}</div>
+      <div class="text-muted small mt-2">
+        En MVP: el match se propone contra <code>Payment</code> por ventana ±3 días, moneda y monto exacto.
+      </div>
+    </div>
+  </div>
+
+  {% if transactions.count == 0 %}
+    <div class="alert alert-warning">No hay transacciones importadas.</div>
+  {% else %}
+    <div class="table-responsive">
+      <table class="table table-sm table-striped align-middle">
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Descripción</th>
+            <th>Monto</th>
+            <th>Moneda</th>
+            <th>Mejor match</th>
+            <th>Acción</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for tx in transactions %}
+            {% with rec=reconciliations|default_if_none:"" %}
+            {% endwith %}
+            {# Como reconciliations se arma por tx con get_or_create, buscamos por payment/tx en backend.
+               Para MVP mostramos solo el primer match sugerido si existe. #}
+            {% for r in reconciliations %}
+              {% if r.bank_transaction_id == tx.id %}
+                <tr>
+                  <td>{{ tx.transaction_date }}</td>
+                  <td>{{ tx.concept|default:tx.description }}</td>
+                  <td>{{ tx.amount }}</td>
+                  <td>{{ tx.currency }}</td>
+                  <td>
+                    {% if r.status == "proposed" or r.status == 0 %}
+                      Propuesto (conf: {{ r.match_confidence|default:"-" }})
+                    {% else %}
+                      {{ r.get_status_display|default:r.status }}
+                    {% endif %}
+                    {% if r.payment %}
+                      <div class="small text-muted">
+                        Payment: {{ r.payment.id }} ({{ r.payment.payment_date }} / {{ r.payment.amount }} {{ r.payment.currency }})
+                      </div>
+                    {% endif %}
+                  </td>
+                  <td>
+                    <form method="post" action="{% url 'reconciliation_confirm' r.id %}">
+                      {% csrf_token %}
+                      <input type="hidden" name="reconciliation_id" value="{{ r.id }}">
+                      <div class="d-flex gap-2 flex-wrap">
+                        <button type="submit" name="action" value="confirm" class="btn btn-success btn-sm">Confirmar</button>
+                        <button type="submit" name="action" value="reject" class="btn btn-outline-danger btn-sm">Rechazar</button>
+                      </div>
+                    </form>
+                  </td>
+                </tr>
+                {% break %}
+              {% endif %}
+            {% empty %}
+              <tr>
+                <td>{{ tx.transaction_date }}</td>
+                <td>{{ tx.concept|default:tx.description }}</td>
+                <td>{{ tx.amount }}</td>
+                <td>{{ tx.currency }}</td>
+                <td class="text-muted">Sin sugerencias</td>
+                <td class="text-muted">-</td>
+              </tr>
+            {% endfor %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

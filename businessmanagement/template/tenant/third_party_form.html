@@ -1,0 +1,37 @@
+{% extends "tenant/base.html" %}
+
+{% block title %}Crear tercero | System Manager{% endblock %}
+
+{% block workspace_content %}
+<div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-4">
+	<div>
+		<div class="sidebar-kicker">CRM operativo</div>
+		<h2 class="h2 mb-1">{{ page_title|default:'Crear tercero' }}</h2>
+		<p class="text-secondary mb-0">Registra clientes, proveedores o contactos mixtos.</p>
+	</div>
+</div>
+
+<form method="post" class="panel-card">
+	{% csrf_token %}
+	<div class="row g-3">
+		{% for field in form %}
+			<div class="{% if field.name == 'address' %}col-12{% else %}col-md-6{% endif %}">
+				{% if field.name == 'is_active' %}
+					<div class="form-check mt-4">
+						{{ field }}
+						<label class="form-check-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+					</div>
+				{% else %}
+					<label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+					{{ field }}
+				{% endif %}
+				{{ field.errors }}
+			</div>
+		{% endfor %}
+	</div>
+	<div class="d-flex justify-content-between gap-2 flex-wrap mt-4">
+		<a href="{% url 'third_party_list' %}" class="btn btn-outline-secondary">Volver</a>
+		<button type="submit" class="btn btn-sm-brand">{{ submit_label|default:'Guardar tercero' }}</button>
+	</div>
+</form>
+{% endblock %}

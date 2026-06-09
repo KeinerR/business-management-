@@ -1,0 +1,54 @@
+{% extends "tenant/base.html" %}
+{% block title %}Cuentas bancarias | System Manager{% endblock %}
+
+{% block workspace_content %}
+<div class="container mt-4">
+  <div class="row">
+    <div class="col-md-7">
+      <h3>{{ page_title|default:"Nueva cuenta bancaria" }}</h3>
+
+      <form method="post">
+        {% csrf_token %}
+
+        <div class="mb-3">
+          <label class="form-label">Nombre</label>
+          {{ form.name }}
+          {% if form.name.errors %}
+            <div class="text-danger small">{{ form.name.errors }}</div>
+          {% endif %}
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label">Banco (opcional)</label>
+          {{ form.bank_name }}
+          {% if form.bank_name.errors %}
+            <div class="text-danger small">{{ form.bank_name.errors }}</div>
+          {% endif %}
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label">Moneda base</label>
+          {{ form.base_currency }}
+          {% if form.base_currency.errors %}
+            <div class="text-danger small">{{ form.base_currency.errors }}</div>
+          {% endif %}
+          <div class="form-text">
+            Se usa como referencia; los extractos pueden traer otras monedas en el CSV.
+          </div>
+        </div>
+
+        <div class="form-check mb-3">
+          {{ form.is_active }}
+          <label class="form-check-label" for="{{ form.is_active.id_for_label }}">Activa</label>
+          {% if form.is_active.errors %}
+            <div class="text-danger small">{{ form.is_active.errors }}</div>
+          {% endif %}
+        </div>
+
+        <button type="submit" class="btn btn-primary">Guardar</button>
+        <a class="btn btn-outline-secondary" href="{% url 'bank_account_list' %}">Cancelar</a>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

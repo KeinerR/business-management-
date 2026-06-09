@@ -1,0 +1,63 @@
+{% extends "tenant/base.html" %}
+
+{% block title %}Editar empleado | System Manager{% endblock %}
+
+{% block workspace_content %}
+<section>
+	<div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-4">
+		<div>
+			<div class="sidebar-kicker">Gestion de equipo</div>
+			<h1 class="h3 mb-1">Editar empleado</h1>
+			<p class="text-secondary mb-0">Actualiza los datos del empleado y sus roles.</p>
+		</div>
+		<div class="d-flex gap-2 flex-wrap">
+			<a class="btn btn-outline-secondary" href="{% url 'employee_list' %}">Volver</a>
+		</div>
+	</div>
+
+	<form method="post" class="panel-card">
+		{% csrf_token %}
+		{% if form.non_field_errors %}
+			<div class="alert alert-danger" role="alert">{{ form.non_field_errors }}</div>
+		{% endif %}
+		<div class="row g-3">
+			<div class="col-md-6">
+				<label class="form-label" for="{{ form.first_name.id_for_label }}">{{ form.first_name.label }}</label>
+				{{ form.first_name }}
+				{{ form.first_name.errors }}
+			</div>
+			<div class="col-md-6">
+				<label class="form-label" for="{{ form.last_name.id_for_label }}">{{ form.last_name.label }}</label>
+				{{ form.last_name }}
+				{{ form.last_name.errors }}
+			</div>
+			<div class="col-md-6">
+				<label class="form-label" for="{{ form.email.id_for_label }}">{{ form.email.label }}</label>
+				{{ form.email }}
+				{{ form.email.errors }}
+			</div>
+			<div class="col-md-6">
+				<label class="form-label" for="{{ form.phone.id_for_label }}">{{ form.phone.label }}</label>
+				{{ form.phone }}
+				{{ form.phone.errors }}
+			</div>
+			<div class="col-md-6">
+				<label class="form-label" for="{{ form.position.id_for_label }}">{{ form.position.label }}</label>
+				{{ form.position }}
+				{{ form.position.errors }}
+			</div>
+			<div class="col-12">
+				<label class="form-label">{{ form.groups.label }}</label>
+				<div class="role-grid">
+					{{ form.groups }}
+				</div>
+				{{ form.groups.errors }}
+			</div>
+		</div>
+		<div class="d-flex justify-content-between gap-2 flex-wrap mt-4">
+			<a href="{% url 'employee_list' %}" class="btn btn-outline-secondary">Cancelar</a>
+			<button type="submit" class="btn btn-sm-brand">Guardar cambios</button>
+		</div>
+	</form>
+</section>
+{% endblock %}

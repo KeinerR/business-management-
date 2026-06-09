@@ -1,0 +1,67 @@
+{% extends "platform/base.html" %}
+
+{% block title %}Tenants | System Manager{% endblock %}
+
+{% block platform_content %}
+<section>
+	<div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-4">
+		<div>
+			<div class="text-uppercase text-success small fw-bold">Plataforma</div>
+			<h1 class="h3 mb-1">Tenants y dominios</h1>
+			<p class="text-secondary mb-0">Cada fila representa una empresa aislada en su propio schema.</p>
+		</div>
+		<a class="btn btn-sm-brand" href="{% url 'platform_tenant_create' %}">Crear tenant</a>
+	</div>
+
+	<div class="table-responsive">
+		<table class="table table-hover align-middle">
+			<thead>
+				<tr>
+					<th>Empresa</th>
+					<th>Schema</th>
+					<th>Dominios</th>
+					<th>Estado</th>
+					<th>Creado</th>
+					<th>Acciones</th>
+				</tr>
+			</thead>
+			<tbody>
+				{% for tenant in tenants %}
+					<tr>
+						<td class="fw-semibold">{{ tenant.name }}</td>
+						<td><code>{{ tenant.schema_name }}</code></td>
+						<td>
+							{% for domain in tenant.domains.all %}
+								<a href="http://{{ domain.domain }}:5000" target="_blank" class="badge text-bg-light border text-decoration-none">{{ domain.domain }}</a>
+							{% empty %}
+								<span class="text-secondary">Sin dominio</span>
+							{% endfor %}
+						</td>
+						<td>
+							{% if tenant.is_active %}
+								<span class="badge bg-success">Activo</span>
+							{% else %}
+								<span class="badge bg-danger">Inactivo</span>
+							{% endif %}
+						</td>
+						<td>{{ tenant.created_on }}</td>
+						<td>
+							<div class="btn-group">
+								<a href="{% url 'platform_tenant_edit' tenant.id %}" class="btn btn-sm btn-outline-primary">Editar</a>
+								<form action="{% url 'platform_tenant_delete' tenant.id %}" method="post" class="d-inline" onsubmit="return confirm('¿Estás seguro de eliminar este tenant? Se borrarán todos sus datos permanentemente.')">
+									{% csrf_token %}
+									<button type="submit" class="btn btn-sm btn-outline-danger">Eliminar</button>
+								</form>
+							</div>
+						</td>
+					</tr>
+				{% empty %}
+					<tr>
+						<td colspan="4" class="text-secondary">No hay tenants creados.</td>
+					</tr>
+				{% endfor %}
+			</tbody>
+		</table>
+	</div>
+</section>
+{% endblock %}

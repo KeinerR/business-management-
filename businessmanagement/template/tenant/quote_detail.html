@@ -1,0 +1,245 @@
+{% extends "tenant/base.html" %}
+{% load static %}
+
+{% block title %}Cotización {{ quote.quote_number }} | System Manager{% endblock %}
+
+{% block workspace_content %}
+<div class="container mt-4">
+    <div class="row mb-4">
+        <div class="col-md-8">
+            <h1 class="h2">Cotización {{ quote.quote_number }}</h1>
+        </div>
+        <div class="col-md-4 text-end">
+            <a href="{% url 'quote_list' %}" class="btn btn-secondary">
+                <i class="bi bi-arrow-left"></i> Volver
+            </a>
+            {% if quote.status == 'draft' %}
+                <form method="post" action="{% url 'quote_accept' quote.id %}" style="display:inline;" onsubmit="return confirm('¿Aceptar la cotización?');">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-success">
+                        <i class="bi bi-check-circle"></i> Aceptar
+                    </button>
+                </form>
+            {% endif %}
+
+            {% if quote.status == 'accepted' %}
+                <form method="post" action="{% url 'quote_convert_to_invoice' quote.id %}" style="display:inline;" onsubmit="return confirm('¿Convertir esta cotización a factura?');">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-arrow-right-circle"></i> Convertir a Factura
+                    </button>
+                </form>
+            {% endif %}
+
+            {% if quote.status == 'converted' and quote.converted_invoice %}
+                <a href="{% url 'invoice_detail' quote.converted_invoice.id %}" class="btn btn-info">
+                    <i class="bi bi-file-earmark-text"></i> Ver Factura
+                </a>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Quote Details -->
+        <div class="col-lg-8">
+            <div class="card mb-4">
+                <div class="card-header bg-light">
+                    <h5 class="mb-0">Información de la Cotización</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <h6 class="text-muted">Empresa</h6>
+                            <p>{{ quote.business.business_name }}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <h6 class="text-muted">Cliente</h6>
+                            <p>
+                                {% if quote.third_party %}
+                                    <span>{{ quote.third_party.name }}</span>
+                                {% else %}
+                                    <em>Sin cliente asignado</em>
+                                {% endif %}
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <h6 class="text-muted">Fecha de Emisión</h6>
+                            <p>{{ quote.issue_date|date:"d/m/Y" }}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <h6 class="text-muted">Fecha de Vencimiento</h6>
+                            <p>
+                                {% if quote.due_date %}
+                                    {{ quote.due_date|date:"d/m/Y" }}
+                                {% else %}
+                                    <em>No especificada</em>
+                                {% endif %}
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <h6 class="text-muted">Estado</h6>
+                            <p>
+                                <span class="badge bg-{% if quote.status == 'draft' %}secondary{% elif quote.status == 'accepted' %}info{% elif quote.status == 'converted' %}success{% elif quote.status == 'cancelled' %}dark{% endif %}">
+                                    {{ quote.get_status_display }}
+                                </span>
+                            </p>
+                        </div>
+                        <div class="col-md-6">
+                            <h6 class="text-muted">Moneda</h6>
+                            <p>{{ quote.currency }}</p>
+                        </div>
+                    </div>
+
+                    {% if quote.description %}
+                        <div class="mb-3">
+                            <h6 class="text-muted">Descripción General</h6>
+                            <p>{{ quote.description }}</p>
+                        </div>
+                    {% endif %}
+
+                    {% if quote.notes %}
+                        <div class="mb-3">
+                            <h6 class="text-muted">Notas</h6>
+                            <p>{{ quote.notes }}</p>
+                        </div>
+                    {% endif %}
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6 class="text-muted">Proyecto</h6>
+                            <p>{{ quote.project.name|default:"-" }}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <h6 class="text-muted">Creado por</h6>
+                            <p>{{ quote.created_by.get_full_name|default:quote.created_by.username }}</p>
+                        </div>
+                    </div>
+
+                    <div class="mt-3">
+                        <h6 class="text-muted">Fecha de Creación</h6>
+                        <p>{{ quote.created_at|date:"d/m/Y H:i" }}</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Line Items -->
+            <div class="card mb-4">
+                <div class="card-header bg-light">
+                    <h5 class="mb-0">Líneas de Cotización</h5>
+                </div>
+                <div class="card-body">
+                    {% if quote.items.exists %}
+                        <div class="table-responsive">
+                            <table class="table">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Descripción</th>
+                                        <th style="width: 100px;">Cantidad</th>
+                                        <th style="width: 140px;">Precio Unitario</th>
+                                        <th style="width: 140px;">Subtotal</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for item in quote.items.all %}
+                                        <tr>
+                                            <td>{{ item.description }}</td>
+                                            <td class="text-end">{{ item.quantity }}</td>
+                                            <td class="text-end">${{ item.unit_price|floatformat:2 }}</td>
+                                            <td class="text-end"><strong>${{ item.subtotal|floatformat:2 }}</strong></td>
+                                        </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <div class="alert alert-info" role="alert">
+                            <i class="bi bi-info-circle"></i> Esta cotización no tiene líneas de detalle.
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Totals Summary -->
+        <div class="col-lg-4">
+            <div class="card">
+                <div class="card-header bg-light">
+                    <h5 class="mb-0">Resumen de Totales</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row mb-3">
+                        <div class="col-6">
+                            <p class="text-muted mb-0">Subtotal:</p>
+                        </div>
+                        <div class="col-6 text-end">
+                            <p class="mb-0">${{ quote.subtotal|floatformat:2 }}</p>
+                        </div>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-6">
+                            <p class="text-muted mb-0">IVA ({{ quote.tax_percentage }}%):</p>
+                        </div>
+                        <div class="col-6 text-end">
+                            <p class="mb-0">${{ quote.tax_amount|floatformat:2 }}</p>
+                        </div>
+                    </div>
+
+                    <hr>
+
+                    <div class="row">
+                        <div class="col-6">
+                            <p class="h5 mb-0">Total:</p>
+                        </div>
+                        <div class="col-6 text-end">
+                            <p class="h5 mb-0 text-primary">
+                                <strong>${{ quote.total|floatformat:2 }} {{ quote.currency }}</strong>
+                            </p>
+                        </div>
+                    </div>
+
+                    {% if quote.converted_invoice %}
+                        <div class="mt-4 pt-4 border-top">
+                            <h6 class="text-muted">Convertida a Factura</h6>
+                            <p>
+                                <a href="{% url 'invoice_detail' quote.converted_invoice.id %}">
+                                    {{ quote.converted_invoice.invoice_number }}
+                                </a>
+                            </p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            {% if quote.financial_entry %}
+                <div class="card mt-4">
+                    <div class="card-header bg-light">
+                        <h5 class="mb-0">Movimiento Financiero (Cartera)</h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="mb-0">
+                            {{ quote.financial_entry.get_entry_type_display }} - {{ quote.financial_entry.status }}
+                        </p>
+                    </div>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<style>
+    .table {
+        margin-bottom: 0;
+    }
+    .table th {
+        font-weight: 600;
+        color: #495057;
+    }
+</style>
+{% endblock %}

@@ -1,0 +1,227 @@
+{% extends "tenant/base.html" %}
+{% load static %}
+
+{% block title %}Factura {{ invoice.invoice_number }} | System Manager{% endblock %}
+
+{% block workspace_content %}
+<div class="container mt-4">
+    <div class="row mb-4">
+        <div class="col-md-8">
+            <h1 class="h2">Factura {{ invoice.invoice_number }}</h1>
+        </div>
+        <div class="col-md-4 text-end">
+            <a href="{% url 'invoice_list' %}" class="btn btn-secondary">
+                <i class="bi bi-arrow-left"></i> Volver
+            </a>
+            <a href="{% url 'invoice_pdf' invoice.id %}" class="btn btn-danger">
+                <i class="bi bi-file-pdf"></i> Descargar PDF
+            </a>
+            {% if invoice.status == 'draft' %}
+                <a href="{% url 'invoice_edit' invoice.id %}" class="btn btn-warning">
+                    <i class="bi bi-pencil"></i> Editar
+                </a>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Invoice Details -->
+        <div class="col-lg-8">
+            <div class="card mb-4">
+                <div class="card-header bg-light">
+                    <h5 class="mb-0">Información de la Factura</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <h6 class="text-muted">Empresa</h6>
+                            <p>{{ invoice.business.business_name }}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <h6 class="text-muted">Cliente</h6>
+                            <p>
+                                {% if invoice.third_party %}
+                                    <a href="{% url 'third_party_list' %}">{{ invoice.third_party.name }}</a>
+                                {% else %}
+                                    <em>Sin cliente asignado</em>
+                                {% endif %}
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <h6 class="text-muted">Fecha de Emisión</h6>
+                            <p>{{ invoice.issue_date|date:"d/m/Y" }}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <h6 class="text-muted">Fecha de Vencimiento</h6>
+                            <p>
+                                {% if invoice.due_date %}
+                                    {{ invoice.due_date|date:"d/m/Y" }}
+                                {% else %}
+                                    <em>No especificada</em>
+                                {% endif %}
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <h6 class="text-muted">Estado</h6>
+                            <p>
+                                <span class="badge bg-{% if invoice.status == 'draft' %}secondary{% elif invoice.status == 'issued' %}info{% elif invoice.status == 'paid' %}success{% elif invoice.status == 'overdue' %}danger{% elif invoice.status == 'cancelled' %}dark{% endif %}">
+                                    {{ invoice.get_status_display }}
+                                </span>
+                            </p>
+                        </div>
+                        <div class="col-md-6">
+                            <h6 class="text-muted">Moneda</h6>
+                            <p>{{ invoice.currency }}</p>
+                        </div>
+                    </div>
+
+                    {% if invoice.description %}
+                        <div class="mb-3">
+                            <h6 class="text-muted">Descripción General</h6>
+                            <p>{{ invoice.description }}</p>
+                        </div>
+                    {% endif %}
+
+                    {% if invoice.notes %}
+                        <div class="mb-3">
+                            <h6 class="text-muted">Notas</h6>
+                            <p>{{ invoice.notes }}</p>
+                        </div>
+                    {% endif %}
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6 class="text-muted">Creado por</h6>
+                            <p>{{ invoice.created_by.get_full_name|default:invoice.created_by.username }}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <h6 class="text-muted">Fecha de Creación</h6>
+                            <p>{{ invoice.created_at|date:"d/m/Y H:i" }}</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Line Items -->
+            <div class="card mb-4">
+                <div class="card-header bg-light">
+                    <h5 class="mb-0">Líneas de Factura</h5>
+                </div>
+                <div class="card-body">
+                    {% if invoice.items.exists %}
+                        <div class="table-responsive">
+                            <table class="table">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Descripción</th>
+                                        <th style="width: 100px;">Cantidad</th>
+                                        <th style="width: 120px;">Precio Unitario</th>
+                                        <th style="width: 120px;">Subtotal</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for item in invoice.items.all %}
+                                        <tr>
+                                            <td>{{ item.description }}</td>
+                                            <td class="text-end">{{ item.quantity }}</td>
+                                            <td class="text-end">${{ item.unit_price|floatformat:2 }}</td>
+                                            <td class="text-end"><strong>${{ item.subtotal|floatformat:2 }}</strong></td>
+                                        </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <div class="alert alert-info" role="alert">
+                            <i class="bi bi-info-circle"></i> Esta factura no tiene líneas de detalle.
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Totals Summary -->
+        <div class="col-lg-4">
+            <div class="card">
+                <div class="card-header bg-light">
+                    <h5 class="mb-0">Resumen de Totales</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row mb-3">
+                        <div class="col-6">
+                            <p class="text-muted mb-0">Subtotal:</p>
+                        </div>
+                        <div class="col-6 text-end">
+                            <p class="mb-0">${{ invoice.subtotal|floatformat:2 }}</p>
+                        </div>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-6">
+                            <p class="text-muted mb-0">IVA ({{ invoice.tax_percentage }}%):</p>
+                        </div>
+                        <div class="col-6 text-end">
+                            <p class="mb-0">${{ invoice.tax_amount|floatformat:2 }}</p>
+                        </div>
+                    </div>
+
+                    <hr>
+
+                    <div class="row">
+                        <div class="col-6">
+                            <p class="h5 mb-0">Total:</p>
+                        </div>
+                        <div class="col-6 text-end">
+                            <p class="h5 mb-0 text-primary">
+                                <strong>${{ invoice.total|floatformat:2 }} {{ invoice.currency }}</strong>
+                            </p>
+                        </div>
+                    </div>
+
+                    {% if invoice.financial_entry %}
+                        <div class="mt-4 pt-4 border-top">
+                            <h6 class="text-muted">Movimiento Financiero</h6>
+                            <p>
+                                <a href="{% url 'financial_entry_list' %}">
+                                    {{ invoice.financial_entry.get_entry_type_display }}
+                                </a>
+                            </p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Audit Information -->
+            <div class="card mt-4">
+                <div class="card-header bg-light">
+                    <h5 class="mb-0">Información de Auditoría</h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted mb-2">
+                        <small>
+                            <strong>Creado:</strong> {{ invoice.created_at|date:"d/m/Y H:i" }}<br>
+                            <strong>Actualizado:</strong> {{ invoice.updated_at|date:"d/m/Y H:i" }}
+                        </small>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .table {
+        margin-bottom: 0;
+    }
+    .table th {
+        font-weight: 600;
+        color: #495057;
+    }
+</style>
+{% endblock %}

@@ -1,0 +1,251 @@
+{% extends "platform/base.html" %}
+{% load static %}
+
+{% block title %}{{ title }} | System Manager{% endblock %}
+
+{% block platform_content %}
+<section>
+  <div class="mb-4">
+    <div class="platform-kicker">Gestión de Tenants</div>
+    <h1 class="h3 mb-1">{{ title }}</h1>
+    <p class="text-secondary mb-0">
+      {% if form.instance.pk %}
+        Actualiza la configuración del tenant y sus módulos.
+      {% else %}
+        Este flujo crea el schema, dominio, empresa base y usuario administrador inicial.
+      {% endif %}
+    </p>
+  </div>
+
+  <form method="post" novalidate class="vstack gap-3">
+    {% csrf_token %}
+    {% if form.non_field_errors %}
+      <div class="alert alert-danger">
+        {{ form.non_field_errors }}
+      </div>
+    {% endif %}
+
+    <div class="platform-card">
+      <h2 class="h5 mb-3">Información del Tenant</h2>
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label" for="{{ form.name.id_for_label }}">{{ form.name.label }}</label>
+          {{ form.name }}
+          {{ form.name.errors }}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label" for="{{ form.tenant_type.id_for_label }}">{{ form.tenant_type.label }}</label>
+          {{ form.tenant_type }}
+          {{ form.tenant_type.errors }}
+        </div>
+        {% if form.schema_name %}
+        <div class="col-md-4">
+          <label class="form-label" for="{{ form.schema_name.id_for_label }}">{{ form.schema_name.label }}</label>
+          {{ form.schema_name }}
+          {{ form.schema_name.errors }}
+        </div>
+        {% endif %}
+        <div class="col-md-4">
+          <label class="form-label" for="{{ form.domain.id_for_label }}">{{ form.domain.label }}</label>
+          {{ form.domain }}
+          {% if form.domain.help_text %}
+            <div class="form-text">{{ form.domain.help_text }}</div>
+          {% endif %}
+          {{ form.domain.errors }}
+        </div>
+        <div class="col-md-4 d-flex align-items-center">
+          <div class="form-check form-switch mt-4">
+            {{ form.is_active }}
+            <label class="form-check-label" for="{{ form.is_active.id_for_label }}">{{ form.is_active.label }}</label>
+          </div>
+          {{ form.is_active.errors }}
+        </div>
+      </div>
+    </div>
+
+    <div class="platform-card">
+      <h2 class="h5 mb-3">Configuración de Módulos</h2>
+      <p class="text-muted small">Selecciona los módulos que estarán disponibles para este tenant.</p>
+
+      <div class="row g-4">
+        <div class="col-md-6">
+          <div class="p-3 bg-light rounded border border-info border-opacity-25 h-100">
+            <h3 class="h6 fw-bold mb-3 text-info">
+              <i class="bi bi-person-badge"></i> Módulos Personales
+            </h3>
+            <div class="vstack gap-2">
+              {% for checkbox in form.enabled_modules %}
+                {% if checkbox.data.value in modules_individual %}
+                  <div class="form-check">
+                    {{ checkbox.tag }}
+                    <label class="form-check-label" for="{{ checkbox.id_for_label }}">
+                      {{ checkbox.choice_label }}
+                    </label>
+                  </div>
+                {% endif %}
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+
+        <div class="col-md-6">
+          <div class="p-3 bg-light rounded border border-primary border-opacity-25 h-100">
+            <h3 class="h6 fw-bold mb-3 text-primary">
+              <i class="bi bi-building"></i> Módulos Empresariales
+            </h3>
+            <div class="vstack gap-2">
+              {% for checkbox in form.enabled_modules %}
+                {% if checkbox.data.value in modules_business %}
+                  <div class="form-check">
+                    {{ checkbox.tag }}
+                    <label class="form-check-label" for="{{ checkbox.id_for_label }}">
+                      {{ checkbox.choice_label }}
+                    </label>
+                  </div>
+                {% endif %}
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+      </div>
+      {{ form.enabled_modules.errors }}
+    </div>
+
+    {% if not form.instance.pk %}
+    <div class="platform-card" id="business-info-section">
+      <h2 class="h5 mb-3">Empresa base</h2>
+      <div class="row g-3">
+        <div class="col-md-6">
+          <label class="form-label" for="{{ form.business_name.id_for_label }}">{{ form.business_name.label }}</label>
+          {{ form.business_name }}
+          {{ form.business_name.errors }}
+        </div>
+        <div class="col-md-3">
+          <label class="form-label" for="{{ form.business_phone.id_for_label }}">{{ form.business_phone.label }}</label>
+          {{ form.business_phone }}
+          {{ form.business_phone.errors }}
+        </div>
+        <div class="col-md-3">
+          <label class="form-label" for="{{ form.business_email.id_for_label }}">{{ form.business_email.label }}</label>
+          {{ form.business_email }}
+          {{ form.business_email.errors }}
+        </div>
+        <div class="col-md-6">
+          <label class="form-label" for="{{ form.name_business_owner.id_for_label }}">{{ form.name_business_owner.label }}</label>
+          {{ form.name_business_owner }}
+          {{ form.name_business_owner.errors }}
+        </div>
+        <div class="col-md-6">
+          <label class="form-label" for="{{ form.last_name_business_owner.id_for_label }}">{{ form.last_name_business_owner.label }}</label>
+          {{ form.last_name_business_owner }}
+          {{ form.last_name_business_owner.errors }}
+        </div>
+        <div class="col-12">
+          <label class="form-label" for="{{ form.business_address.id_for_label }}">{{ form.business_address.label }}</label>
+          {{ form.business_address }}
+          {{ form.business_address.errors }}
+        </div>
+        <div class="col-12">
+          <label class="form-label" for="{{ form.description.id_for_label }}">{{ form.description.label }}</label>
+          {{ form.description }}
+          {{ form.description.errors }}
+        </div>
+      </div>
+    </div>
+
+    <div class="platform-card">
+      <h2 class="h5 mb-3">Usuario administrador del tenant</h2>
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label" for="{{ form.admin_username.id_for_label }}">{{ form.admin_username.label }}</label>
+          {{ form.admin_username }}
+          {{ form.admin_username.errors }}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label" for="{{ form.admin_password.id_for_label }}">{{ form.admin_password.label }}</label>
+          {{ form.admin_password }}
+          {{ form.admin_password.errors }}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label" for="{{ form.admin_email.id_for_label }}">{{ form.admin_email.label }}</label>
+          {{ form.admin_email }}
+          {{ form.admin_email.errors }}
+        </div>
+        <div class="col-md-6">
+          <label class="form-label" for="{{ form.admin_first_name.id_for_label }}">{{ form.admin_first_name.label }}</label>
+          {{ form.admin_first_name }}
+          {{ form.admin_first_name.errors }}
+        </div>
+        <div class="col-md-6">
+          <label class="form-label" for="{{ form.admin_last_name.id_for_label }}">{{ form.admin_last_name.label }}</label>
+          {{ form.admin_last_name }}
+          {{ form.admin_last_name.errors }}
+        </div>
+        <div class="col-md-6">
+          <label class="form-label" for="{{ form.admin_phone.id_for_label }}">{{ form.admin_phone.label }}</label>
+          {{ form.admin_phone }}
+          {{ form.admin_phone.errors }}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="d-flex justify-content-between align-items-center mt-4">
+      <a href="{% url 'platform_tenant_list' %}" class="btn btn-outline-secondary">Cancelar</a>
+      <button type="submit" class="btn btn-sm-brand">
+        {% if form.instance.pk %}Guardar cambios{% else %}Crear tenant{% endif %}
+      </button>
+    </div>
+  </form>
+</section>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    const tenantTypeSelect = document.getElementById('{{ form.tenant_type.id_for_label }}');
+    const businessSection = document.getElementById('business-info-section');
+
+    function toggleBusinessSection() {
+      if (tenantTypeSelect && businessSection) {
+        const isIndividual = tenantTypeSelect.value === 'individual';
+        if (isIndividual) {
+          businessSection.style.display = 'none';
+        } else {
+          businessSection.style.display = 'block';
+        }
+
+        if (!window.location.href.includes('edit')) {
+          const individualModules = {{ modules_individual|safe }};
+          const businessModules = {{ modules_business|safe }};
+          
+          document.querySelectorAll('input[name="enabled_modules"]').forEach(cb => {
+            if (isIndividual) {
+              cb.checked = individualModules.includes(cb.value);
+            } else {
+              cb.checked = true;
+            }
+          });
+        }
+      }
+    }
+
+    if (tenantTypeSelect) {
+      tenantTypeSelect.addEventListener('change', toggleBusinessSection);
+      toggleBusinessSection();
+    }
+  });
+</script>
+
+<style>
+  .platform-card {
+    background: #fff;
+    border: 1px solid var(--sm-line);
+    border-radius: 8px;
+    padding: 1.5rem;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+  }
+  .form-check-input:checked {
+    background-color: var(--sm-brand);
+    border-color: var(--sm-brand);
+  }
+</style>
+{% endblock %}

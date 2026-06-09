@@ -1,0 +1,107 @@
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: systemmanager_db
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  web:
+    container_name: systemmanager_web
+    build:
+      context: .
+      dockerfile: Dockerfile
+    user: "${UID:-1000}:${GID:-1000}"
+    command:
+      - sh
+      - -c
+      - |
+        python manage.py migrate_schemas --noinput &&
+        python manage.py shell -c "
+        from django.contrib.auth import get_user_model;
+        User = get_user_model();
+        username='KeinerDev';
+        email='keinerdev13@gmail.com';
+        password='KeinerCetiia*!2';
+        u, created = User.objects.get_or_create(username=username, defaults={'email': email});
+        if created:
+            u.set_password(password);
+            u.is_staff = True;
+            u.is_superuser = True;
+            u.save();
+            print('Superuser creado');
+        " &&
+        python manage.py ensure_dev_tenants &&
+        python manage.py create_demo_tenant --type individual --schema demo --name "Demo Persona Natural" --domain demo.127.0.0.1.nip.io &&
+        python manage.py runserver 0.0.0.0:5000
+    ports:
+      - "5000:5000"
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  redis:
+    image: redis:7-alpine
+    container_name: systemmanager_redis
+    ports:
+      - "6379:6379"
+
+  celery_worker:
+    container_name: systemmanager_celery_worker
+    build:
+      context: .
+      dockerfile: Dockerfile
+    user: "${UID:-1000}:${GID:-1000}"
+    command: celery -A config worker --loglevel=info
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  celery_beat:
+    container_name: systemmanager_celery_beat
+    build:
+      context: .
+      dockerfile: Dockerfile
+    user: "${UID:-1000}:${GID:-1000}"
+    command: celery -A config beat --loglevel=info
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+volumes:
+  postgres_data:
+

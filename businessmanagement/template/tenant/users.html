@@ -1,0 +1,56 @@
+{% extends "tenant/base.html" %}
+{% block main_class %}container-fluid px-3 px-lg-4 py-4{% endblock %}
+
+{% block title %}Usuarios | System Manager{% endblock %}
+
+{% block workspace_content %}
+
+<div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-4">
+    <div>
+        <div class="sidebar-kicker">Gestion de usuarios</div>
+        <h2 class="h2 mb-1">Usuarios del tenant</h2>
+        <p class="text-secondary mb-0">Administra los usuarios asociados a este tenant y sus permisos.</p>
+    </div>
+</div>
+
+<div class="panel-card">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>Usuario</th>
+                    <th>Nombre</th>
+                    <th>Email</th>
+                    <th>Roles</th>
+                    <th>Staff</th>
+                    <th>Accion</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user in users %}
+                    <tr>
+                        <td class="fw-semibold">{{ user.username }}</td>
+                        <td>{{ user.first_name }} {{ user.last_name }}</td>
+                        <td>{{ user.email|default:"-" }}</td>
+                        <td>
+                            {% for group in user.groups.all %}
+                                <span class="badge text-bg-light border">{{ group.name }}</span>
+                            {% empty %}
+                                <span class="text-secondary">Sin rol</span>
+                            {% endfor %}
+                        </td>
+                        <td>{% if user.is_staff %}<span class="badge text-bg-success">Si</span>{% else %}<span class="badge text-bg-secondary">No</span>{% endif %}</td>
+                        <td><a href="{% url 'tenant_user_edit' user.id %}" class="btn btn-sm btn-outline-secondary">Editar</a></td>
+                    </tr>
+                {% empty %}
+                    <tr>
+                        <td colspan="5" class="text-secondary">No hay usuarios en este tenant.</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% endblock %}
+     

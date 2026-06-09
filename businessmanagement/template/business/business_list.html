@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+
+{% block title %}Empresas | System Manager{% endblock %}
+
+{% block main_class %}px-0 py-0{% endblock %}
+
+{% block extra_css %}
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap');                                
+</style>
+{% endblock %}
+
+{% block content %}
+<section class="card border-0 shadow-sm">
+    <div class="card-body p-4">     
+        <h1 class="h4 mb-3">Empresas</h1>
+        <p class="text-secondary mb-0">
+            Aquí puedes gestionar las empresas registradas en el sistema.
+        </p>
+        <div class="mt-4">
+            {% comment %} <a href="{% url 'create_business' %}" class="btn btn-primary">Crear nueva empresa</a> {% endcomment %}
+        </div>
+        <div class="table-responsive mt-4">
+            <table class="table table-hover align-middle">
+                <thead>           
+                    <tr>
+                        <th>Nombre</th>
+                        <th>Dirección</th>
+                        <th>Teléfono</th>
+                        <th>Email</th>
+                        <th>Acciones</th>
+                    </tr>   
+                </thead>
+                <tbody>
+                    {% for business in businesses %}
+                    <tr>
+                        <td>{{ business.business_name }}</td>
+                        <td>{{ business.business_address }}</td>
+                        <td>{{ business.business_phone }}</td>
+                        <td>{{ business.business_email }}</td>
+                        <td>
+                            <span class="text-secondary">Sin acciones</span>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="5" class="text-center text-secondary">No hay empresas registradas  </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+{% endblock %}    

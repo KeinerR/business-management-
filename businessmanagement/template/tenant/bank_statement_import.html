@@ -1,0 +1,69 @@
+{% extends "tenant/base.html" %}
+{% block content %}
+<div class="container mt-4">
+  <h3 class="mb-3">{{ page_title|default:"Importar extracto CSV" }}</h3>
+
+  <div class="card">
+    <div class="card-body">
+      <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        <div class="row">
+          <div class="col-md-6 mb-3">
+            <label class="form-label">Cuenta bancaria</label>
+            {{ form.bank_account }}
+            {% if form.bank_account.errors %}
+              <div class="text-danger small">{{ form.bank_account.errors }}</div>
+            {% endif %}
+          </div>
+
+          <div class="col-md-6 mb-3">
+            <label class="form-label">Nombre / referencia</label>
+            {{ form.statement_name }}
+            {% if form.statement_name.errors %}
+              <div class="text-danger small">{{ form.statement_name.errors }}</div>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="col-md-6 mb-3">
+            <label class="form-label">Archivo CSV</label>
+            {{ form.file }}
+            {% if form.file.errors %}
+              <div class="text-danger small">{{ form.file.errors }}</div>
+            {% endif %}
+          </div>
+
+          <div class="col-md-3 mb-3">
+            <label class="form-label">Separador</label>
+            {{ form.delimiter }}
+            {% if form.delimiter.errors %}
+              <div class="text-danger small">{{ form.delimiter.errors }}</div>
+            {% endif %}
+          </div>
+
+          <div class="col-md-3 mb-3 d-flex align-items-end">
+            <div>
+              <label class="form-label">{{ form.has_header.label }}</label>
+              <div class="form-check">
+                {{ form.has_header }}
+              </div>
+              {% if form.has_header.errors %}
+                <div class="text-danger small">{{ form.has_header.errors }}</div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary">Importar</button>
+      </form>
+
+      <div class="alert alert-info mt-3 mb-0">
+        <strong>MVP CSV:</strong> el CSV debe traer encabezado con columnas flexibles como:
+        <code>date/fecha</code>, <code>amount/monto</code>, <code>currency/moneda</code>,
+        <code>description/concept/detalle</code> (opcional) y <code>external_id/reference</code> (opcional).
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

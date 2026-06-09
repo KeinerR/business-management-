@@ -1,0 +1,323 @@
+{% extends "base.html" %}
+
+{% block title %}Ingresar | SystemManager{% endblock %}
+
+{% block main_class %}app-main p-0{% endblock %}
+
+{% block extra_css %}
+<style>
+	.login-view {
+		min-height: calc(100vh - 113px);
+		display: grid;
+		align-items: center;
+		background: #f6f8f7;
+		padding: clamp(1rem, 4vw, 3rem) 0;
+	}
+
+	.login-container {
+		width: min(1040px, calc(100% - 2rem));
+		margin-inline: auto;
+	}
+
+	.login-shell {
+		display: grid;
+		grid-template-columns: minmax(0, .95fr) minmax(360px, .75fr);
+		border: 1px solid #cad9d6;
+		border-radius: 8px;
+		background: #fff;
+		box-shadow: var(--sm-shadow);
+		overflow: hidden;
+	}
+
+	.login-context {
+		display: flex;
+		flex-direction: column;
+		justify-content: space-between;
+		gap: 2rem;
+		background: #f8faf9;
+		border-right: 1px solid var(--sm-line);
+		padding: clamp(1.25rem, 4vw, 2rem);
+	}
+
+	.login-kicker {
+		color: var(--sm-brand-dark);
+		font-size: .8rem;
+		font-weight: 800;
+		text-transform: uppercase;
+	}
+
+	.login-context h1 {
+		font-size: clamp(2rem, 5vw, 3.4rem);
+		font-weight: 800;
+		line-height: 1;
+		margin: .55rem 0 .85rem;
+		max-width: 620px;
+	}
+
+	.login-context p {
+		color: var(--sm-muted);
+		line-height: 1.65;
+		max-width: 600px;
+		margin: 0;
+	}
+
+	.context-grid {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: .75rem;
+	}
+
+	.context-item {
+		border: 1px solid var(--sm-line);
+		border-radius: 8px;
+		background: #fff;
+		padding: .9rem;
+	}
+
+	.context-item strong {
+		display: block;
+		font-size: .95rem;
+		margin-bottom: .3rem;
+	}
+
+	.context-item span {
+		color: var(--sm-muted);
+		font-size: .88rem;
+	}
+
+	.login-panel {
+		padding: clamp(1.25rem, 4vw, 2rem);
+	}
+
+	.login-panel-header {
+		margin-bottom: 1.25rem;
+	}
+
+	.login-panel-header h2 {
+		font-size: clamp(1.45rem, 3vw, 2rem);
+		font-weight: 800;
+		margin: 0 0 .35rem;
+	}
+
+	.login-panel-header p {
+		color: var(--sm-muted);
+		margin: 0;
+	}
+
+	.login-form {
+		display: grid;
+		gap: 1rem;
+	}
+
+	.login-field {
+		display: grid;
+		gap: .4rem;
+	}
+
+	.login-field label {
+		font-size: .9rem;
+		font-weight: 800;
+	}
+
+	.login-field .form-control {
+		min-height: 46px;
+	}
+
+	.login-alert {
+		border-radius: 8px;
+		margin-bottom: 1rem;
+	}
+
+	.login-submit-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		margin-top: .25rem;
+	}
+
+	.login-note {
+		color: var(--sm-muted);
+		font-size: .9rem;
+		line-height: 1.45;
+	}
+
+	.btn-login-submit {
+		background: var(--sm-brand);
+		border: 1px solid var(--sm-brand);
+		border-radius: 8px;
+		color: #fff;
+		font-weight: 800;
+		min-width: 132px;
+		padding: .78rem 1rem;
+	}
+
+	.btn-login-submit:hover {
+		background: var(--sm-brand-dark);
+		border-color: var(--sm-brand-dark);
+		color: #fff;
+	}
+
+	.login-divider {
+		border-top: 1px solid var(--sm-line);
+		margin: 1.35rem 0;
+	}
+
+	.login-help-panel {
+		border: 1px solid var(--sm-line);
+		border-radius: 8px;
+		background: #f8faf9;
+		padding: .9rem;
+	}
+
+	.login-help-panel strong {
+		display: block;
+		font-size: .9rem;
+		margin-bottom: .25rem;
+	}
+
+	.login-help-panel span {
+		color: var(--sm-muted);
+		font-size: .88rem;
+	}
+
+	@media (max-width: 991.98px) {
+		.login-shell {
+			grid-template-columns: 1fr;
+		}
+
+		.login-context {
+			border-right: 0;
+			border-bottom: 1px solid var(--sm-line);
+		}
+	}
+
+	@media (max-width: 575.98px) {
+		.login-container {
+			width: min(100% - 1rem, 1040px);
+		}
+
+		.context-grid {
+			grid-template-columns: 1fr;
+		}
+
+		.login-submit-row {
+			align-items: stretch;
+			flex-direction: column;
+		}
+
+		.btn-login-submit {
+			width: 100%;
+		}
+	}
+</style>
+{% endblock %}
+
+{% block content %}
+<section class="login-view">
+	<div class="login-container">
+		<div class="login-shell">
+			<div class="login-context">
+				<div>
+					<div class="login-kicker">Acceso seguro</div>
+					<h1>Entra al panel correcto de SystemManager.</h1>
+					<p>
+						Los usuarios master acceden desde public. Los equipos operativos entran desde el dominio de su empresa tenant para mantener los datos aislados.
+					</p>
+				</div>
+				<div class="context-grid">
+					<div class="context-item">
+						<strong>Plataforma</strong>
+						<span>Tenants, dominios y supervision global.</span>
+					</div>
+					<div class="context-item">
+						<strong>Empresa tenant</strong>
+						<span>Finanzas, terceros, usuarios y auditoria.</span>
+					</div>
+					<div class="context-item">
+						<strong>Roles</strong>
+						<span>Administrador, operador financiero y solo lectura.</span>
+					</div>
+					<div class="context-item">
+						<strong>Trazabilidad</strong>
+						<span>Eventos criticos registrados por schema.</span>
+					</div>
+				</div>
+			</div>
+
+			<div class="login-panel">
+				<div class="login-panel-header">
+					<h2>Iniciar sesion</h2>
+					<p>Usa tus credenciales asignadas por el administrador.</p>
+				</div>
+
+				{% if form.non_field_errors %}
+					<div class="alert alert-danger login-alert" role="alert">
+						{% for error in form.non_field_errors %}
+							<div>{{ error }}</div>
+						{% endfor %}
+					</div>
+				{% endif %}
+
+				<form method="post" class="login-form">
+					{% csrf_token %}
+					{% if next %}
+						<input type="hidden" name="next" value="{{ next }}">
+					{% endif %}
+
+					<div class="login-field">
+						<label for="id_username">Usuario</label>
+						<input
+							type="text"
+							name="username"
+							class="form-control{% if form.username.errors %} is-invalid{% endif %}"
+							id="id_username"
+							value="{{ form.username.value|default_if_none:'' }}"
+							autocomplete="username"
+							required
+						>
+						{% if form.username.errors %}
+							<div class="invalid-feedback d-block">
+								{% for error in form.username.errors %}
+									<div>{{ error }}</div>
+								{% endfor %}
+							</div>
+						{% endif %}
+					</div>
+
+					<div class="login-field">
+						<label for="id_password">Contrasena</label>
+						<input
+							type="password"
+							name="password"
+							class="form-control{% if form.password.errors %} is-invalid{% endif %}"
+							id="id_password"
+							autocomplete="current-password"
+							required
+						>
+						{% if form.password.errors %}
+							<div class="invalid-feedback d-block">
+								{% for error in form.password.errors %}
+									<div>{{ error }}</div>
+								{% endfor %}
+							</div>
+						{% endif %}
+					</div>
+
+					<div class="login-submit-row">
+						<div class="login-note">Si tu usuario no entra, revisa que estes en el dominio correcto.</div>
+						<button type="submit" class="btn btn-login-submit">Entrar</button>
+					</div>
+				</form>
+
+				<div class="login-divider"></div>
+
+				<div class="login-help-panel">
+					<strong>Acceso por tenant</strong>
+					<span>Un empleado solo puede iniciar sesion en el dominio de la empresa donde existe su perfil.</span>
+				</div>
+			</div>
+		</div>
+	</div>
+</section>
+{% endblock %}

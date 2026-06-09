@@ -1,0 +1,176 @@
+{% extends "tenant/base.html" %}
+{% load static %}
+
+{% block title %}Cotizaciones | System Manager{% endblock %}
+
+{% block workspace_content %}
+<div class="container-fluid mt-4">
+    <div class="row mb-4">
+        <div class="col-md-6">
+            <h1 class="h2">Cotizaciones</h1>
+        </div>
+        <div class="col-md-6 text-end">
+            <a href="{% url 'quote_create' %}" class="btn btn-primary">
+                <i class="bi bi-plus-circle"></i> Nueva Cotización
+            </a>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-3">
+                    <label for="status" class="form-label">Estado</label>
+                    <select name="status" id="status" class="form-select">
+                        <option value="">-- Todos --</option>
+                        {% for value, label in status_choices %}
+                            <option value="{{ value }}" {% if selected_status == value %}selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="project" class="form-label">Proyecto</label>
+                    <select name="project" id="project" class="form-select">
+                        <option value="">-- Todos --</option>
+                        {% for project in project_choices %}
+                            <option value="{{ project.id }}" {% if selected_project == project.id|stringformat:"s" %}selected{% endif %}>{{ project.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="due_from" class="form-label">Fecha desde</label>
+                    <input type="date" name="due_from" id="due_from" class="form-control" value="{{ request.GET.due_from }}">
+                </div>
+                <div class="col-md-3">
+                    <label for="due_to" class="form-label">Fecha hasta</label>
+                    <input type="date" name="due_to" id="due_to" class="form-control" value="{{ request.GET.due_to }}">
+                </div>
+                <div class="col-md-3">
+                    <label>&nbsp;</label>
+                    <button type="submit" class="btn btn-secondary w-100">
+                        <i class="bi bi-search"></i> Filtrar
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Quotes Table -->
+    {% if quotes %}
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead class="table-light">
+                    <tr>
+                        <th>Número</th>
+                        <th>Proyecto</th>
+                        <th>Cliente</th>
+                        <th>Fecha Emisión</th>
+                        <th>Fecha Vencimiento</th>
+                        <th>Total</th>
+                        <th>Estado</th>
+                        <th>Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for quote in quotes %}
+                        <tr>
+                            <td>
+                                <a href="{% url 'quote_detail' quote.id %}">{{ quote.quote_number }}</a>
+                            </td>
+                            <td>{{ quote.project.name|default:"-" }}</td>
+                            <td>{{ quote.third_party.name|default:"Sin cliente" }}</td>
+                            <td>{{ quote.issue_date|date:"d/m/Y" }}</td>
+                            <td>
+                                {% if quote.due_date %}
+                                    {{ quote.due_date|date:"d/m/Y" }}
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
+                            <td>
+                                <strong>${{ quote.total|floatformat:2 }} {{ quote.currency }}</strong>
+                            </td>
+                            <td>
+                                <span class="badge bg-{% if quote.status == 'draft' %}secondary{% elif quote.status == 'accepted' %}info{% elif quote.status == 'converted' %}success{% elif quote.status == 'cancelled' %}dark{% endif %}">
+                                    {{ quote.get_status_display }}
+                                </span>
+                            </td>
+                            <td>
+                                <a href="{% url 'quote_detail' quote.id %}" class="btn btn-sm btn-info" title="Ver">
+                                    <i class="bi bi-eye"></i>
+                                </a>
+                                {% if quote.status == 'draft' %}
+                                    <a href="{% url 'quote_accept' quote.id %}" class="btn btn-sm btn-success" title="Aceptar" onclick="return confirm('¿Aceptar la cotización?');">
+                                        <i class="bi bi-check-circle"></i> Aceptar
+                                    </a>
+                                {% endif %}
+                                {% if quote.status == 'accepted' %}
+                                    <form method="post" action="{% url 'quote_convert_to_invoice' quote.id %}" style="display:inline;" onsubmit="return confirm('¿Convertir esta cotización a factura?');">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-sm btn-primary" title="Convertir a Factura">
+                                            <i class="bi bi-arrow-right-circle"></i> Convertir
+                                        </button>
+                                    </form>
+                                {% endif %}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        {% if quotes.has_other_pages %}
+            <nav aria-label="Page navigation" class="mt-4">
+                <ul class="pagination justify-content-center">
+                    {% if quotes.has_previous %}
+                        <li class="page-item">
+                            <a class="page-link" href="?page=1">Primera</a>
+                        </li>
+                        <li class="page-item">
+                            <a class="page-link" href="?page={{ quotes.previous_page_number }}">Anterior</a>
+                        </li>
+                    {% endif %}
+
+                    {% for num in quotes.paginator.page_range %}
+                        {% if quotes.number == num %}
+                            <li class="page-item active">
+                                <span class="page-link">{{ num }}</span>
+                            </li>
+                        {% else %}
+                            <li class="page-item">
+                                <a class="page-link" href="?page={{ num }}">{{ num }}</a>
+                            </li>
+                        {% endif %}
+                    {% endfor %}
+
+                    {% if quotes.has_next %}
+                        <li class="page-item">
+                            <a class="page-link" href="?page={{ quotes.next_page_number }}">Siguiente</a>
+                        </li>
+                        <li class="page-item">
+                            <a class="page-link" href="?page={{ quotes.paginator.num_pages }}">Última</a>
+                        </li>
+                    {% endif %}
+                </ul>
+            </nav>
+        {% endif %}
+    {% else %}
+        <div class="alert alert-info" role="alert">
+            <i class="bi bi-info-circle"></i> No hay cotizaciones disponibles.
+            <a href="{% url 'quote_create' %}" class="alert-link">Crear una nueva.</a>
+        </div>
+    {% endif %}
+</div>
+
+<style>
+    .table-hover tbody tr:hover {
+        background-color: #f5f5f5;
+    }
+    .btn-sm {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.875rem;
+    }
+</style>
+{% endblock %}

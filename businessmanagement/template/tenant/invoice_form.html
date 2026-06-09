@@ -1,0 +1,359 @@
+{% extends "tenant/base.html" %} {% load static %} 
+{% block title %} Factura |System Manager{% endblock %} 
+{% block workspace_content %}
+<div class="container mt-4">
+  <div class="row">
+    <div class="col-lg-8 offset-lg-2">
+      <h1 class="h2 mb-4">
+        {% if invoice %} Editar Factura: {{ invoice.invoice_number }} 
+        {% else %}
+          Nueva Factura 
+        {% endif %}
+      </h1>
+
+      <form method="post" class="needs-validation" novalidate>
+        {% csrf_token %}
+
+        <div class="card mb-4">
+          <div class="card-header bg-light">
+            <h5 class="mb-0">Información General</h5>
+          </div>
+          <div class="card-body">
+            <div class="row mb-3">
+              <div class="col-md-6">
+                <label
+                  for="{{ form.invoice_number.id_for_label }}"
+                  class="form-label"
+                >
+                  Número de Factura {% if form.invoice_number.field.required %}
+                  <span class="text-danger">*</span>
+                  {% endif %}
+                </label>
+                {{ form.invoice_number }} {% if form.invoice_number.help_text %}
+                <div class="form-text">{{ form.invoice_number.help_text }}</div>
+                {% endif %} {% if form.invoice_number.errors %}
+                <div class="invalid-feedback d-block">
+                  {{ form.invoice_number.errors.0 }}
+                </div>
+                {% endif %}
+              </div>
+              <div class="col-md-6">
+                <label for="{{ form.status.id_for_label }}" class="form-label">
+                  Estado <span class="text-danger">*</span>
+                </label>
+                {{ form.status }} {% if form.status.errors %}
+                <div class="invalid-feedback d-block">
+                  {{ form.status.errors.0 }}
+                </div>
+                {% endif %}
+              </div>
+            </div>
+
+            <div class="row mb-3">
+              <div class="col-md-6">
+                <label for="{{ form.project.id_for_label }}" class="form-label">
+                  Proyecto
+                </label>
+                {{ form.project }} {% if form.project.errors %}
+                <div class="invalid-feedback d-block">
+                  {{ form.project.errors.0 }}
+                </div>
+                {% endif %}
+              </div>
+              <div class="col-md-6">
+                <label
+                  for="{{ form.third_party.id_for_label }}"
+                  class="form-label"
+                >
+                  Cliente <span class="text-danger">*</span>
+                </label>
+                {{ form.third_party }} {% if form.third_party.errors %}
+                <div class="invalid-feedback d-block">
+                  {{ form.third_party.errors.0 }}
+                </div>
+                {% endif %}
+              </div>
+            </div>
+
+            <div class="row mb-3">
+              <div class="col-md-6">
+                <label
+                  for="{{ form.currency.id_for_label }}"
+                  class="form-label"
+                >
+                  Moneda <span class="text-danger">*</span>
+                </label>
+                {{ form.currency }} {% if form.currency.errors %}
+                <div class="invalid-feedback d-block">
+                  {{ form.currency.errors.0 }}
+                </div>
+                {% endif %}
+              </div>
+              <div class="col-md-6">
+                <label
+                  for="{{ form.tax_percentage.id_for_label }}"
+                  class="form-label"
+                >
+                  Porcentaje de Impuesto 
+                  {% if form.tax_percentage.field.required %}
+                  <span class="text-danger">*</span>
+                  {% endif %}
+                </label>
+                {{ form.tax_percentage }} {% if form.tax_percentage.errors %}
+                <div class="invalid-feedback d-block">
+                  {{ form.tax_percentage.errors.0 }}
+                </div>
+                {% endif %}
+              </div>
+            </div>
+
+            <div class="row mb-3">
+              <div class="col-md-6">
+                <label
+                  for="{{ form.issue_date.id_for_label }}"
+                  class="form-label"
+                >
+                  Fecha de Emisión <span class="text-danger">*</span>
+                </label>
+                {{ form.issue_date }} {% if form.issue_date.errors %}
+                <div class="invalid-feedback d-block">
+                  {{ form.issue_date.errors.0 }}
+                </div>
+                {% endif %}
+              </div>
+              <div class="col-md-6">
+                <label
+                  for="{{ form.due_date.id_for_label }}"
+                  class="form-label"
+                >
+                  Fecha de Vencimiento
+                </label>
+                {{ form.due_date }} {% if form.due_date.errors %}
+                <div class="invalid-feedback d-block">
+                  {{ form.due_date.errors.0 }}
+                </div>
+                {% endif %}
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <label
+                for="{{ form.description.id_for_label }}"
+                class="form-label"
+              >
+                Descripción General
+              </label>
+              {{ form.description }} {% if form.description.errors %}
+              <div class="invalid-feedback d-block">
+                {{ form.description.errors.0 }}
+              </div>
+              {% endif %}
+            </div>
+
+            <div class="mb-3">
+              <label for="{{ form.notes.id_for_label }}" class="form-label">
+                Notas
+              </label>
+              {{ form.notes }} {% if form.notes.errors %}
+              <div class="invalid-feedback d-block">
+                {{ form.notes.errors.0 }}
+              </div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+
+        <!-- Line Items -->
+        <div class="card mb-4">
+          <div
+            class="card-header bg-light d-flex justify-content-between align-items-center"
+          >
+            <h5 class="mb-0">Líneas de Factura</h5>
+            <button
+              type="button"
+              class="btn btn-sm btn-primary"
+              onclick="addInvoiceItem()"
+            >
+              <i class="bi bi-plus-circle"></i> Agregar línea
+            </button>
+          </div>
+          <div class="card-body">
+            <div class="table-responsive">
+              <table class="table table-sm" id="invoice_items_table">
+                <thead class="table-light">
+                  <tr>
+                    <th style="width: 50%">Descripción</th>
+                    <th style="width: 15%">Cantidad</th>
+                    <th style="width: 20%">Precio Unitario</th>
+                    <th style="width: 10%">Acción</th>
+                  </tr>
+                </thead>
+                <tbody id="items_tbody">
+                  {% if invoice %} {% for item in invoice.items.all %}
+                  <tr class="invoice-item-row">
+                    <td>
+                      <input
+                        type="text"
+                        name="item_description"
+                        class="form-control form-control-sm"
+                        value="{{ item.description }}"
+                        required
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        name="item_quantity"
+                        class="form-control form-control-sm"
+                        value="{{ item.quantity }}"
+                        step="0.01"
+                        required
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        name="item_price"
+                        class="form-control form-control-sm"
+                        value="{{ item.unit_price }}"
+                        step="0.01"
+                        required
+                      />
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-danger"
+                        onclick="removeInvoiceItem(this)"
+                      >
+                        <i class="bi bi-trash"></i>
+                      </button>
+                    </td>
+                  </tr>
+                  {% endfor %} {% else %}
+                  <tr class="invoice-item-row">
+                    <td>
+                      <input
+                        type="text"
+                        name="item_description"
+                        class="form-control form-control-sm"
+                        required
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        name="item_quantity"
+                        class="form-control form-control-sm"
+                        step="0.01"
+                        required
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        name="item_price"
+                        class="form-control form-control-sm"
+                        step="0.01"
+                        required
+                      />
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-danger"
+                        onclick="removeInvoiceItem(this)"
+                      >
+                        <i class="bi bi-trash"></i>
+                      </button>
+                    </td>
+                  </tr>
+                  {% endif %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="d-flex justify-content-between mb-4">
+          <a href="{% url 'invoice_list' %}" class="btn btn-secondary">
+            <i class="bi bi-arrow-left"></i> Volver
+          </a>
+          <button type="submit" class="btn btn-primary">
+            <i class="bi bi-check-circle"></i>
+            {% if invoice %}Actualizar{% else %}Crear{% endif %} Factura
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<style>
+  .form-control,
+  .form-select {
+    border-radius: 0.375rem;
+    border: 1px solid #dee2e6;
+  }
+  .form-control:focus,
+  .form-select:focus {
+    border-color: #80bdff;
+    box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+  }
+  .invalid-feedback {
+    color: #dc3545;
+    font-size: 0.875rem;
+  }
+</style>
+
+<script>
+  function addInvoiceItem() {
+    const tbody = document.getElementById('items_tbody');
+    const row = document.createElement('tr');
+    row.className = 'invoice-item-row';
+    row.innerHTML = `
+        <td>
+            <input type="text" name="item_description" class="form-control form-control-sm" required>
+        </td>
+        <td>
+            <input type="number" name="item_quantity" class="form-control form-control-sm" step="0.01" required>
+        </td>
+        <td>
+            <input type="number" name="item_price" class="form-control form-control-sm" step="0.01" required>
+        </td>
+        <td>
+            <button type="button" class="btn btn-sm btn-danger" onclick="removeInvoiceItem(this)">
+                <i class="bi bi-trash"></i>
+            </button>
+        </td>
+    `;
+    tbody.appendChild(row);
+  }
+
+  function removeInvoiceItem(button) {
+    const row = button.closest('tr');
+    const tbody = document.getElementById('items_tbody');
+    if (tbody.children.length > 1) {
+      row.remove();
+    } else {
+      alert('Debe haber al menos una línea en la factura.');
+    }
+  }
+
+  // Form validation
+  document.querySelectorAll('.needs-validation').forEach((form) => {
+    form.addEventListener(
+      'submit',
+      (event) => {
+        if (!form.checkValidity()) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        form.classList.add('was-validated');
+      },
+      false,
+    );
+  });
+</script>
+{% endblock %}

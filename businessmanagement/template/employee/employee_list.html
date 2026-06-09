@@ -1,0 +1,126 @@
+{% extends "tenant/base.html" %}
+
+{% block title %}Empleados | System Manager{% endblock %}
+
+{% block workspace_content %}
+<section>
+	<div class="mb-4">
+		<div class="d-flex justify-content-between align-items-center mb-4">
+			<div>
+				<h2 class="h3 fw-bold mb-2">
+					<i class="bi bi-people"></i> Empleados y Usuarios
+				</h2>
+				<p class="text-muted mb-0">Gestiona el equipo de trabajo que opera en esta empresa</p>
+			</div>
+			<a class="btn btn-primary" href="{% url 'create_employee' %}">
+				<i class="bi bi-plus-circle"></i> Nuevo Empleado
+			</a>
+		</div>
+	</div>
+
+	<div class="card shadow-sm border-0">
+		<div class="card-body p-0">
+			{% if employees %}
+				<div class="table-responsive">
+					<table class="table table-hover align-middle mb-0">
+						<thead class="table-light border-bottom-2">
+							<tr>
+								<th class="ps-4 fw-bold text-muted">Nombre</th>
+								<th class="fw-bold text-muted">Usuario</th>
+								<th class="fw-bold text-muted">Email</th>
+								<th class="fw-bold text-muted">Cargo</th>
+								<th class="fw-bold text-muted">Empresa</th>
+								<th class="fw-bold text-muted">Estado</th>
+								<th class="text-center fw-bold text-muted pe-4">Acciones</th>
+							</tr>
+						</thead>
+						<tbody>
+							{% for employee in employees %}
+								<tr class="border-bottom">
+									<td class="ps-4">
+										<div class="fw-semibold">{{ employee.first_name }} {{ employee.last_name }}</div>
+										{% if employee.phone %}
+											<small class="text-muted">{{ employee.phone }}</small>
+										{% endif %}
+									</td>
+									<td>
+										<code class="text-muted">{{ employee.user.username }}</code>
+									</td>
+									<td>
+										{% if employee.email %}
+											<a href="mailto:{{ employee.email }}" class="text-decoration-none">{{ employee.email }}</a>
+										{% else %}
+											<span class="text-muted">-</span>
+										{% endif %}
+									</td>
+									<td>
+										<span class="badge bg-secondary bg-opacity-10 text-secondary">
+											{{ employee.position|default:"Sin cargo" }}
+										</span>
+									</td>
+									<td>
+										<small>{{ employee.business.business_name }}</small>
+									</td>
+									<td>
+										{% if employee.user.is_active %}
+											<span class="badge bg-success">
+												<i class="bi bi-check-circle"></i> Activo
+											</span>
+										{% else %}
+											<span class="badge bg-secondary">
+												<i class="bi bi-x-circle"></i> Inactivo
+											</span>
+										{% endif %}
+									</td>
+									<td class="pe-4">
+										<div class="btn-group btn-group-sm" role="group">
+											<a href="{% url 'employee_edit' employee.id %}" class="btn btn-outline-primary">
+												<i class="bi bi-pencil"></i> Editar
+											</a>
+											<form method="post" action="{% url 'employee_toggle_active' employee.id %}" style="display:inline">
+												{% csrf_token %}
+												<button type="submit" class="btn btn-outline-{% if employee.user.is_active %}danger{% else %}success{% endif %}">
+													<i class="bi bi-{% if employee.user.is_active %}lock{% else %}unlock{% endif %}"></i>
+													{% if employee.user.is_active %}Inhabilitar{% else %}Habilitar{% endif %}
+												</button>
+											</form>
+										</div>
+									</td>
+								</tr>
+							{% endfor %}
+						</tbody>
+					</table>
+				</div>
+			{% else %}
+				<div class="text-center py-5">
+					<i class="bi bi-inbox" style="font-size: 3rem; color: #dee2e6;"></i>
+					<p class="text-muted mt-3 mb-3">No hay empleados creados aún</p>
+					<a href="{% url 'create_employee' %}" class="btn btn-primary btn-sm">
+						<i class="bi bi-plus-circle"></i> Crear el primer empleado
+					</a>
+				</div>
+			{% endif %}
+		</div>
+	</div>
+</section>
+
+<style>
+	.table-light {
+		background-color: #f8f9fa !important;
+	}
+	
+	.border-bottom-2 {
+		border-bottom: 2px solid #dee2e6 !important;
+	}
+	
+	.btn-group-sm .btn {
+		font-size: 0.875rem;
+		padding: 0.375rem 0.5rem;
+	}
+	
+	.bg-opacity-10 {
+		opacity: 0.1;
+	}
+</style>
+{% endblock %}
+

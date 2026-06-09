@@ -1,0 +1,42 @@
+{% extends "tenant/base.html" %}
+{% block workspace_content %}
+<div class="container mt-4">
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <h3>Cuentas bancarias</h3>
+    <a class="btn btn-primary btn-sm" href="{% url 'bank_account_create' %}">Nueva cuenta</a>
+  </div>
+
+  {% if accounts %}
+    <div class="table-responsive">
+      <table class="table table-sm table-striped">
+        <thead>
+          <tr>
+            <th>Nombre</th>
+            <th>Banco</th>
+            <th>Moneda base</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for acc in accounts %}
+            <tr>
+              <td>{{ acc.name }}</td>
+              <td>{{ acc.bank_name|default:"-" }}</td>
+              <td>{{ acc.base_currency }}</td>
+              <td>
+                {% if acc.is_active %}
+                  <span class="badge text-bg-success">Activa</span>
+                {% else %}
+                  <span class="badge text-bg-secondary">Inactiva</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="alert alert-warning">No hay cuentas bancarias aún.</div>
+  {% endif %}
+</div>
+{% endblock %}

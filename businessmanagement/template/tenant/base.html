@@ -1,0 +1,214 @@
+{% extends "base.html" %}
+{% block main_class %}container-fluid px-3 px-lg-4 py-4{% endblock %}
+{% block extra_css %}
+<style>
+  .workspace-layout {
+    display: grid;
+    grid-template-columns: 272px minmax(0, 1fr);
+    gap: 1rem;
+  }
+
+  .workspace-sidebar,
+  .workspace-main,
+  .panel-card {
+    border: 1px solid var(--sm-line);
+    background: #fff;
+    border-radius: 8px;
+  }
+
+  .workspace-sidebar {
+    position: sticky;
+    top: 1rem;
+    align-self: start;
+    padding: 1rem;
+    box-shadow: 0 8px 22px rgba(23, 33, 31, 0.04);
+  }
+
+  .workspace-main {
+    padding: 1.25rem;
+    min-height: calc(100vh - 11rem);
+    box-shadow: 0 8px 22px rgba(23, 33, 31, 0.04);
+  }
+
+  .sidebar-kicker {
+    color: var(--sm-brand-dark);
+    font-size: 0.78rem;
+    font-weight: 800;
+    text-transform: uppercase;
+  }
+
+  .sidebar-link {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.72rem 0.85rem;
+    border-radius: 8px;
+    color: var(--sm-ink);
+    text-decoration: none;
+    font-weight: 700;
+    align-items: center;
+  }
+
+  .sidebar-link:hover {
+    background: var(--sm-soft);
+    color: var(--sm-brand-dark);
+  }
+
+  .sidebar-link small {
+    color: var(--sm-muted);
+    font-weight: 800;
+  }
+
+  .sidebar-section-title {
+    margin: 1rem 0 0.5rem;
+    color: var(--sm-muted);
+    font-size: 0.78rem;
+    font-weight: 800;
+    text-transform: uppercase;
+  }
+
+  .metric-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 0.85rem;
+  }
+
+  .panel-card {
+    padding: 1rem;
+  }
+
+  .panel-muted {
+    border: 1px solid var(--sm-line);
+    border-radius: 8px;
+    background: var(--sm-panel);
+    padding: 1rem;
+  }
+
+  .metric-value {
+    color: var(--sm-brand-dark);
+    font-size: 2rem;
+    font-weight: 800;
+    line-height: 1;
+  }
+
+  .table thead th {
+    color: var(--sm-muted);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+  }
+
+  @media (max-width: 991.98px) {
+    .workspace-layout {
+      grid-template-columns: 1fr;
+    }
+
+    .workspace-sidebar {
+      position: static;
+    }
+  }
+</style>
+{% block workspace_css %}
+{% endblock %} 
+{% endblock %} 
+{% block content %}
+<div class="workspace-layout">
+  <aside class="workspace-sidebar">
+    <div class="sidebar-kicker">Empresa tenant</div>
+    <h1 class="h4 mb-1">
+      {% block tenant_sidebar_title %}System Manager{% endblock %}
+    </h1>
+    <p class="text-secondary small mb-3">
+      {% block tenant_sidebar_subtitle %}Gestion interna de la empresa.
+      {% endblock %}
+    </p>
+
+    <div class="sidebar-section-title">Operacion</div>
+    <a class="sidebar-link" href="{% url 'dashboard' %}"
+      ><span>Resumen</span><small>Inicio</small></a
+    >
+
+    {% if request.tenant.enabled_modules and "finances" in request.tenant.enabled_modules %}
+    <a class="sidebar-link" href="{% url 'financial_entry_list' %}"
+      ><span>Finanzas</span><small>Movs.</small></a
+    >
+    {% endif %} 
+    {% if request.tenant.enabled_modules and "projects" in request.tenant.enabled_modules %}
+    <a class="sidebar-link" href="{% url 'project_list' %}"
+      ><span>Proyectos</span><small>Obras</small></a
+    >
+    {% endif %} 
+    {% if request.tenant.enabled_modules and "categories" in request.tenant.enabled_modules %}
+    <a class="sidebar-link" href="{% url 'financial_category_list' %}"
+      ><span>Categorías</span><small>Clasif.</small></a
+    >
+    {% endif %} 
+    {% if request.tenant.enabled_modules and "invoices" in request.tenant.enabled_modules %}
+    <a class="sidebar-link" href="{% url 'quote_list' %}"
+      ><span>Cotizaciones</span><small>Ventas</small></a
+    >
+    <a class="sidebar-link" href="{% url 'invoice_list' %}"
+      ><span>Facturas</span><small>Ventas</small></a
+    >
+    {% endif %}
+    {% if request.tenant.enabled_modules and "third_parties" in request.tenant.enabled_modules %}
+    <a class="sidebar-link" href="{% url 'third_party_list' %}"
+      ><span>Terceros</span><small>CRM</small></a
+    >
+    {% endif %} 
+    {% if request.tenant.enabled_modules and "currency_rates" in request.tenant.enabled_modules %}
+    <a class="sidebar-link" href="{% url 'currency_rate_list' %}"
+      ><span>Tasas</span><small>FX</small></a
+    >
+    {% endif %} 
+    {% if request.tenant.enabled_modules and "finances" in request.tenant.enabled_modules %}
+    <a class="sidebar-link" href="{% url 'payment_list' %}"
+      ><span>Pagos</span><small>Conciliación</small></a
+    >
+    {% endif %}
+
+    {% if request.tenant.enabled_modules and "finances" in request.tenant.enabled_modules %}
+    <a class="sidebar-link" href="{% url 'cartera_dashboard' %}"
+      ><span>Cartera</span><small>AR/AP</small></a
+    >
+    {% endif %}
+
+    {% if request.tenant.enabled_modules and "finances" in request.tenant.enabled_modules %}
+    <a class="sidebar-link" href="{% url 'bank_account_list' %}"
+      ><span>Cuentas bancarias</span><small>Banco</small></a
+    >
+    <a class="sidebar-link" href="{% url 'bank_statement_import_csv' %}"
+      ><span>Banco</span><small>Extractos</small></a
+    >
+    {% endif %} 
+    {% if request.tenant.enabled_modules and "employees" in request.tenant.enabled_modules %}
+
+    <a class="sidebar-link" href="{% url 'employee_list' %}"
+      ><span>Empleados</span><small>Equipo</small></a
+    >
+    <a class="sidebar-link" href="{% url 'create_employee' %}"
+      ><span>Crear empleado</span><small>Nuevo</small></a
+    >
+    {% endif %}
+
+    <div class="sidebar-section-title">Accesos</div>
+    <a class="sidebar-link" href="{% url 'tenant_user_list' %}"
+      ><span>Usuarios</span><small>Cuentas</small></a
+    >
+    <a class="sidebar-link" href="{% url 'tenant_group_list' %}"
+      ><span>Grupos</span><small>Roles</small></a
+    >
+    <a class="sidebar-link" href="{% url 'audit_event_list' %}"
+      ><span>Auditoria</span><small>Logs</small></a
+    >
+
+    <div class="sidebar-section-title">Contexto</div>
+    <p class="text-secondary small mb-0">
+      Este panel opera solo sobre el schema de la empresa actual.
+    </p>
+  </aside> 
+
+  <section class="workspace-main">
+    {% block workspace_content %}{% endblock %}
+  </section>
+</div>
+{% endblock %}
