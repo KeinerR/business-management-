@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>{{ page_title }}</h2>
+        <a href="{% url 'generic_import_upload' %}" class="btn btn-primary">Nueva Importación</a>
+    </div>
+
+    <div class="card shadow-sm">
+        <div class="card-body">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>ID Lote</th>
+                        <th>Archivo</th>
+                        <th>Modelo</th>
+                        <th>Fecha Creación</th>
+                        <th>Estado</th>
+                        <th>Total Filas</th>
+                        <th>Procesadas</th>
+                        <th>Fallidas</th>
+                        <th>Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for batch in batches %}
+                    <tr>
+                        <td>{{ batch.id }}</td>
+                        <td>{{ batch.file_name }}</td>
+                        <td>{{ batch.get_target_model_display }}</td>
+                        <td>{{ batch.created_at|date:"d/m/Y H:i" }}</td>
+                        <td>
+                            <span class="badge {% if batch.status == 'confirmed' %}bg-success{% elif batch.status == 'failed' %}bg-danger{% elif batch.status == 'uploaded' or batch.status == 'previewed' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
+                                {{ batch.status }}
+                            </span>
+                        </td>
+                        <td>{{ batch.total_rows }}</td>
+                        <td>{{ batch.processed_rows }}</td>
+                        <td>{{ batch.failed_rows }}</td>
+                        <td>
+                            <a href="{% url 'generic_import_batch_detail' batch.id %}" class="btn btn-sm btn-outline-info">Ver Detalle</a>
+                            {% if batch.status == 'uploaded' or batch.status == 'previewed' %}
+                                <a href="{% url 'generic_import_preview' batch.id %}" class="btn btn-sm btn-outline-primary">Continuar Preview</a>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="9" class="text-center">No hay lotes de importación registrados.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

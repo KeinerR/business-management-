@@ -62,6 +62,24 @@ urlpatterns = [
         views.financial_entry_cancel,
         name="financial_entry_cancel",
     ),
+    path("budgets/", views.budget_list, name="budget_list"),
+    path("budgets/create/", views.budget_create, name="budget_create"),
+    path("budgets/<int:budget_id>/", views.budget_detail, name="budget_detail"),
+    path("budgets/<int:budget_id>/edit/", views.budget_edit, name="budget_edit"),
+    path("import/upload/", views.generic_import_upload, name="generic_import_upload"),
+    path("import/preview/<int:batch_id>/", views.generic_import_preview, name="generic_import_preview"),
+    path("import/confirm/<int:batch_id>/", views.generic_import_confirm, name="generic_import_confirm"),
+    path("import/batches/", views.generic_import_batch_list, name="generic_import_batch_list"),
+    path("import/batches/<int:batch_id>/", views.generic_import_batch_detail, name="generic_import_batch_detail"),
+    path("tax-rules/", views.tax_rule_list, name="tax_rule_list"),
+    path("tax-rules/create/", views.tax_rule_create, name="tax_rule_create"),
+    path("tax-rules/<int:tax_rule_id>/edit/", views.tax_rule_edit, name="tax_rule_edit"),
+
+    path(
+        "accounts/aging/export/",
+        views.cartera_aging_excel_export,
+        name="cartera_aging_excel_export",
+    ),
     # Pagos / Reconciliación
     path("payments/", views.payment_list, name="payment_list"),
     path(
@@ -75,21 +93,29 @@ urlpatterns = [
         views.bank_account_create,
         name="bank_account_create",
     ),
+    path(
+        "bank/accounts/<int:account_id>/edit/",
+        views.bank_account_edit,
+        name="bank_account_edit",
+    ),
 
     # Banco / Extractos / Conciliación (MVP)
     path(
         "bank/statements/import/",
-        views.bank_statement_import_csv,
+        __import__("businessmanagement.services.banking", fromlist=["bank_statement_import_csv"]).bank_statement_import_csv,
         name="bank_statement_import_csv",
     ),
+    # (B2) Banking se implementa en services/banking.py; si hay duplicados en views.py,
+    # esta ruta debe apuntar al servicio.
+    
     path(
         "bank/statements/<int:statement_id>/suggestions/",
-        views.bank_transaction_suggestions,
+        __import__("businessmanagement.services.banking", fromlist=["bank_transaction_suggestions"]).bank_transaction_suggestions,
         name="bank_transaction_suggestions",
     ),
     path(
         "bank/reconciliations/<int:rec_id>/confirm/",
-        views.reconciliation_confirm,
+        __import__("businessmanagement.services.banking", fromlist=["reconciliation_confirm"]).reconciliation_confirm,
         name="reconciliation_confirm",
     ),
 
@@ -123,6 +149,9 @@ urlpatterns = [
         views.employee_toggle_active,
         name="employee_toggle_active",
     ),
+    # Ajustes del Tenant
+    path("settings/modules/", views.module_settings, name="module_settings"),
+    
     path("audit/", views.audit_event_list, name="audit_event_list"),
     # Cotizaciones (Quotes)
     path("quotes/", views.quote_list, name="quote_list"),
@@ -138,6 +167,7 @@ urlpatterns = [
         views.quote_convert_to_invoice,
         name="quote_convert_to_invoice",
     ),
+    path("quotes/<int:quote_id>/pdf/", views.quote_pdf, name="quote_pdf"),
 
     # Facturas (Invoices)
     path("invoices/", views.invoice_list, name="invoice_list"),
@@ -145,10 +175,32 @@ urlpatterns = [
     path("invoices/<int:invoice_id>/", views.invoice_detail, name="invoice_detail"),
     path("invoices/<int:invoice_id>/edit/", views.invoice_edit, name="invoice_edit"),
     path("invoices/<int:invoice_id>/pdf/", views.invoice_pdf, name="invoice_pdf"),
-    path(
-        "invoices/<int:invoice_id>/delete/", views.invoice_delete, name="invoice_delete"
-    ),
+    # Removed invoice_delete in favor of invoice_cancel for data integrity
+
     # Simple JSON API endpoints (read-only)
+    # Notas de Crédito
+    path("credit-notes/", views.credit_note_list, name="credit_note_list"),
+    path("credit-notes/create/", views.credit_note_create, name="credit_note_create"),
+    path(
+        "credit-notes/<int:credit_note_id>/",
+        views.credit_note_detail,
+        name="credit_note_detail",
+    ),
+    path("credit-notes/<int:credit_note_id>/edit/", views.credit_note_edit, name="credit_note_edit"),
+    path("credit-notes/<int:credit_note_id>/cancel/", views.credit_note_cancel, name="credit_note_cancel"),
+    path("credit-notes/<int:credit_note_id>/pdf/", views.credit_note_pdf, name="credit_note_pdf"),
+    # Notas de Débito
+    path("debit-notes/", views.debit_note_list, name="debit_note_list"),
+    path("debit-notes/create/", views.debit_note_create, name="debit_note_create"),
+    path(
+        "debit-notes/<int:debit_note_id>/",
+        views.debit_note_detail,
+        name="debit_note_detail",
+    ),
+    path("debit-notes/<int:debit_note_id>/edit/", views.debit_note_edit, name="debit_note_edit"),
+    path("debit-notes/<int:debit_note_id>/cancel/", views.debit_note_cancel, name="debit_note_cancel"),
+
+    # API Endpoints
     path(
         "api/financial-entries/",
         api.financial_entries_api,

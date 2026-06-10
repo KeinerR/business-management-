@@ -1,6 +1,20 @@
 # TODO - Pagos / Reconciliación (Payment)
 
+## Auditoría / P0 (estado)
+- [x] B1: Gating + autenticación aplicada a vistas financieras (payment_list/cartera_dashboard/project_list)
+- [x] B5: invoice_edit borra items dentro de atomic()
+- [x] B4: payment_create GET/remaining envuelto para evitar 500 por conversión faltante
+- [x] B9: module_enabled_required aplicado a facturas/cotizaciones
+- [x] Hotfix: `celery_worker` ya inicia (NameError DebitNote)
+- [x] B2: eliminar segunda copia duplicada en `businessmanagement/views.py` (560 líneas)
+- [x] B3: asegurar `_parse_csv_date` sin descartes silenciosos y con logging (agregar conteo/report)
+- [x] B6: prefijo QUO- para Quote (tenantdata/models.py)
+- [x] B7: ajustar reconciliación para no romper por UniqueConstraint al re-procesar (update en vez de crear)
+- [ ] B8: ensure_dev_tenants/create_demo_tenant reparan enabled_modules correctamente (ver comandos)
+
+
 ## Paso 1
+
 
 - [x] Investigar repo: no existe módulo Payment/pagos/reconciliación.
 - [x] Confirmar estado actual: `FinancialEntry.status` ya tiene pending/partial/paid/cancelled.
@@ -12,10 +26,10 @@
 
 ## Paso 3 (implementación módulo Payment)
 
-- [ ] Agregar modelo `Payment` en `tenantdata/models.py` (FK a `FinancialEntry`, auditoría).
+- [x] Agregar modelo `Payment` en `tenantdata/models.py` (FK a `FinancialEntry`, auditoría).
 - [x] Agregar migración de DB.
 
-- [ ] Agregar `PaymentForm` en `businessmanagement/forms.py`.
+- [x] Agregar `PaymentForm` en `businessmanagement/forms.py`.
 - [x] Agregar vistas para pantalla directa de Pagos indexada por `FinancialEntry` (listado + crear).
 
 - [ ] Agregar lógica de conversión de moneda (usando `CurrencyRate`) para reconciliación.
@@ -41,9 +55,9 @@
 
 ## Paso 6 (modelos y migraciones)
 
-- [ ] Agregar modelos `Quote`, `QuoteItem` en `tenantdata/models.py`.
-- [ ] Implementar campos y lógica básica (status, totales, calculate_totals).
-- [ ] Crear migración para Quote/QuoteItem.
+- [x] Agregar modelos `Quote`, `QuoteItem` en `tenantdata/models.py`.
+- [x] Implementar campos y lógica básica (status, totales, calculate_totals).
+- [x] Crear migración para Quote/QuoteItem.
 
 ## Paso 7 (forms)
 
@@ -52,10 +66,10 @@
 
 ## Paso 8 (vistas + URLs)
 
-- [ ] Crear `quote_list`, `quote_create`, `quote_detail`.
-- [ ] Crear endpoint `quote_accept` (cambia status a accepted).
-- [ ] Crear endpoint `quote_convert_to_invoice` (accepted → crea Invoice, InvoiceItems, FinancialEntry).
-- [ ] Agregar rutas en `businessmanagement/urls.py`.
+- [x] Crear `quote_list`, `quote_create`, `quote_detail`.
+- [x] Crear endpoint `quote_accept` (cambia status a accepted).
+- [x] Crear endpoint `quote_convert_to_invoice` (accepted → crea Invoice, InvoiceItems, FinancialEntry).
+- [x] Agregar rutas en `businessmanagement/urls.py`.
 
 ## Paso 9 (templates)
 

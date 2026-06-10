@@ -32,10 +32,10 @@
 |---|---|---|
 | **1. Banking/Conciliación** | Modelos completos (BankAccount, BankStatement, BankTransaction, Reconciliation) + import CSV + sugerencias + confirmación | Import **Excel**, **match manual** (elegir pago/movimiento), **conciliación masiva**, listado/detalle de extractos, manejo de `direction` (campo existe pero siempre vacío), edición de cuentas bancarias |
 | **2. Cartera AR/AP** | Dashboard funcional por tercero | Aging buckets (0-30/31-60/61-90/+90), **riesgo de cartera**, vista por **proyecto** y por **factura**, alertas activas (hoy es solo visual), export |
-| **4. Cotizaciones** | Flujo completo Quote→Accept→Invoice con conversión automática | **Editar cotización**, PDF, fecha de expiración/vencimiento automático, numeración correcta (hoy genera prefijo `REC-` igual que factura — bug) |
+| **4. Cotizaciones** | Flujo completo Quote→Accept→Invoice con conversión automática | PDF, fecha de expiración/vencimiento automático, numeración correcta (hoy genera prefijo `REC-` igual que factura — bug) |
 | **5. Motor tributario** | Solo `tax_percentage` plano en Invoice/Quote | Reglas configurables por tenant: IVA múltiple, **retenciones**, exenciones, impuesto por ítem |
 | **10. Notificaciones** | Inexistente como sistema; solo `django.contrib.messages` (flash) | Modelo Notification in-app + generación automática (vencimientos, eventos) |
-| **11. Importación masiva** | Solo CSV bancario (sin preview ni rollback) | Pipeline genérico CSV/Excel con **preview, validación previa y rollback** |
+| **11. Importación masiva** | Solo CSV bancario (sin preview ni rollback) | Pipeline genérico CSV/Excel con **preview, validación previa y rollback**, **Import Excel** |
 | **12. API/Webhooks** | 3 endpoints GET read-only | API de escritura (DRF serializers/viewsets) y **webhooks** por eventos |
 
 ## 1.3 Faltantes (❌ no existen)

@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>{{ page_title }}</h2>
+        <div>
+            <a href="{% url 'generic_import_upload' %}" class="btn btn-secondary">Volver a Subir</a>
+            {% if batch.processed_rows > 0 %}
+                <form action="{% url 'generic_import_confirm' batch.id %}" method="post" class="d-inline">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-success" onclick="return confirm('¿Está seguro de que desea confirmar la importación de los registros válidos?');">Confirmar Importación ({{ batch.processed_rows }} válidos)</button>
+                </form>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card shadow-sm mb-4">
+        <div class="card-header">
+            <h5>Resumen del Lote #{{ batch.id }}</h5>
+        </div>
+        <div class="card-body">
+            <p><strong>Archivo:</strong> {{ batch.file_name }}</p>
+            <p><strong>Modelo de Destino:</strong> {{ batch.get_target_model_display }}</p>
+            <p><strong>Total de Filas:</strong> {{ batch.total_rows }}</p>
+            <p><strong>Registros Válidos:</strong> <span class="badge bg-success">{{ batch.processed_rows }}</span></p>
+            <p><strong>Registros Inválidos:</strong> <span class="badge bg-danger">{{ batch.failed_rows }}</span></p>
+            {% if batch.notes %}<p><strong>Notas del Lote:</strong> {{ batch.notes }}</p>{% endif %}
+        </div>
+    </div>
+
+    {% if invalid_records %}
+    <div class="card shadow-sm mb-4">
+        <div class="card-header bg-danger text-white">
+            <h5>Registros Inválidos ({{ invalid_records.count }})</h5>
+        </div>
+        <div class="card-body">
+            <p>Los siguientes registros no pasaron la validación y no serán importados a menos que se corrijan y se suba un nuevo archivo.</p>
+            <div class="table-responsive">
+                <table class="table table-bordered table-sm">
+                    <thead>
+                        <tr>
+                            <th>Fila</th>
+                            {% for header in headers %}
+                                <th>{{ header }}</th>
+                            {% endfor %}
+                            <th>Errores de Validación</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for record in invalid_records %}
+                        <tr>
+                            <td>{{ forloop.counter }}</td>
+                            {% for header in headers %}
+                                <td>{{ record.row_data|get_item:header|default_if_none:"" }}</td>
+                            {% endfor %}
+                            <td>
+                                {% for error in record.validation_errors %}
+                                    <span class="badge bg-warning text-dark">{{ error }}</span><br>
+                                {% endfor %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if valid_records %}
+    <div class="card shadow-sm">
+        <div class="card-header bg-success text-white">
+            <h5>Registros Válidos ({{ valid_records.count }})</h5>
+        </div>
+        <div class="card-body">
+            <p>Estos registros se importarán si confirma la operación.</p>
+            <div class="table-responsive">
+                <table class="table table-bordered table-sm">
+                    <thead>
+                        <tr>
+                            <th>Fila</th>
+                            {% for header in headers %}
+                                <th>{{ header }}</th>
+                            {% endfor %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for record in valid_records %}
+                        <tr>
+                            <td>{{ forloop.counter }}</td>
+                            {% for header in headers %}
+                                <td>{{ record.row_data|get_item:header|default_if_none:"" }}</td>
+                            {% endfor %}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% comment %} Custom filter to access dictionary items in template {% endcomment %}
+{% load custom_filters %}

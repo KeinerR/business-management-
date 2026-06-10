@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Notas de Crédito</h2>
+        <a href="{% url 'credit_note_create' %}" class="btn btn-primary">Nueva Nota de Crédito</a>
+    </div>
+
+    <div class="card shadow-sm">
+        <div class="card-body">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Número</th>
+                        <th>Fecha</th>
+                        <th>Tercero</th>
+                        <th>Factura</th>
+                        <th>Total</th>
+                        <th>Estado</th>
+                        <th>Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for note in credit_notes %}
+                    <tr>
+                        <td>{{ note.credit_note_number }}</td>
+                        <td>{{ note.issue_date }}</td>
+                        <td>{{ note.third_party.name|default:"-" }}</td>
+                        <td>{{ note.invoice.invoice_number|default:"-" }}</td>
+                        <td>{{ note.total }} {{ note.currency }}</td>
+                        <td>
+                            <span class="badge {% if note.status == 'issued' %}bg-success{% elif note.status == 'cancelled' %}bg-danger{% else %}bg-secondary{% endif %}">
+                                {{ note.get_status_display }}
+                            </span>
+                        </td>
+                        <td>
+                            <a href="{% url 'credit_note_detail' note.id %}" class="btn btn-sm btn-outline-info">Ver</a>
+                            {% if note.status != 'cancelled' %}
+                            <a href="{% url 'credit_note_edit' note.id %}" class="btn btn-sm btn-outline-warning">Editar</a>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="7" class="text-center">No hay notas de crédito registradas.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            
+            {% if credit_notes.has_other_pages %}
+            <nav>
+                <ul class="pagination">
+                    {% if credit_notes.has_previous %}<li class="page-item"><a class="page-link" href="?page={{ credit_notes.previous_page_number }}">Anterior</a></li>{% endif %}
+                    {% if credit_notes.has_next %}<li class="page-item"><a class="page-link" href="?page={{ credit_notes.next_page_number }}">Siguiente</a></li>{% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

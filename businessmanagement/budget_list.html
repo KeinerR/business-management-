@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>{{ page_title }}</h2>
+        <a href="{% url 'budget_create' %}" class="btn btn-primary">Crear Presupuesto</a>
+    </div>
+
+    <div class="card shadow-sm">
+        <div class="card-body">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Nombre</th>
+                        <th>Período</th>
+                        <th>Monto Presupuestado</th>
+                        <th>Estado</th>
+                        <th>Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for budget in budgets %}
+                    <tr>
+                        <td>{{ budget.name }}</td>
+                        <td>{{ budget.period_start_date|date:"d/m/Y" }} - {{ budget.period_end_date|date:"d/m/Y" }}</td>
+                        <td>{{ budget.total_budgeted_amount }} {{ budget.currency }}</td>
+                        <td>
+                            <span class="badge {% if budget.status == 'active' %}bg-success{% elif budget.status == 'completed' %}bg-info{% elif budget.status == 'cancelled' %}bg-danger{% else %}bg-secondary{% endif %}">
+                                {{ budget.get_status_display }}
+                            </span>
+                        </td>
+                        <td>
+                            <a href="{% url 'budget_detail' budget.id %}" class="btn btn-sm btn-outline-info">Ver</a>
+                            {% if budget.status != 'cancelled' %}
+                            <a href="{% url 'budget_edit' budget.id %}" class="btn btn-sm btn-outline-warning">Editar</a>
+                            {% endif %}
+                            {# TODO: Add delete/cancel functionality #}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="5" class="text-center">No hay presupuestos registrados.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            
+            {% if budgets.has_other_pages %}
+            <nav>
+                <ul class="pagination">
+                    {% if budgets.has_previous %}<li class="page-item"><a class="page-link" href="?page={{ budgets.previous_page_number }}">Anterior</a></li>{% endif %}
+                    {% if budgets.has_next %}<li class="page-item"><a class="page-link" href="?page={{ budgets.next_page_number }}">Siguiente</a></li>{% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

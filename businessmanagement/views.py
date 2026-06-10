@@ -17,6 +17,9 @@ from django.http import HttpResponse
 from django.shortcuts import redirect, render
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
+import io
+import csv
+import logging
 from django_tenants.utils import schema_context
 from functools import wraps
 from decimal import Decimal, InvalidOperation
@@ -29,7 +32,6 @@ from tenantdata.models import (
     FinancialEntry,
     ThirdParty,
     Invoice,
-    InvoiceItem,
     Project,
     FinancialCategory,
     Payment,
@@ -38,6 +40,14 @@ from tenantdata.models import (
     BankTransaction,
     Reconciliation,
     Quote,
+    CreditNote,
+    Budget,
+    BudgetLine,
+    TaxRule,
+    CreditNoteItem,
+    ImportBatch,
+    ImportedRecord,
+    DebitNote,
     QuoteItem,
 )
 
@@ -53,18 +63,24 @@ from .forms import (
     TenantUserForm,
     ThirdPartyForm,
     InvoiceForm,
-    InvoiceItemForm,
+    TaxRuleForm,
+    BudgetForm,
+    BudgetLineFormSet,
     QuoteForm,
+    CreditNoteForm,
+    DebitNoteForm,
     PaymentForm,
     ProjectForm,
     FinancialCategoryForm,
-    MODULES_INDIVIDUAL,
-    MODULES_BUSINESS,
     BankStatementImportCSVForm,
     ReconciliationConfirmForm,
+    GenericImportUploadForm,
     BankAccountForm,
 )
 from .models import Domain, Tenant
+from .modules import AVAILABLE_MODULES, MODULES_INDIVIDUAL, MODULES_BUSINESS, MODULE_GROUPS
+
+logger = logging.getLogger(__name__)
 
 # Create your views here.
 
@@ -124,6 +140,10 @@ def record_audit_event(request, action, entity, summary, entity_id="", metadata=
 
 def module_enabled_required(module_name: str):
     """Bloquea vistas si el tenant no tiene habilitado el módulo."""
+    # Validación preventiva para asegurar consistencia con el registro centralizado
+    valid_modules = [m[0] for m in AVAILABLE_MODULES]
+    if module_name not in valid_modules:
+        raise ValueError(f"Módulo '{module_name}' no registrado en modules.AVAILABLE_MODULES")
 
     def decorator(view_func):
         @wraps(view_func)
@@ -300,6 +320,21 @@ def dashboard_view(request):
     )[:6]
     latest_audit_events = AuditEvent.objects.select_related("actor")[:6]
     latest_rates = CurrencyRate.objects.order_by("-rate_date", "currency")[:3]
+
+    today = date.today()
+    # Datos para la gráfica de ingresos vs egresos del mes actual
+    current_month_start = date(today.year, today.month, 1)
+    current_month_entries = FinancialEntry.objects.filter(
+        entry_date__gte=current_month_start,
+        entry_date__lte=today
+    )
+    income_current_month = current_month_entries.filter(entry_type=FinancialEntry.INCOME).aggregate(Sum('amount'))['amount__sum'] or Decimal('0.00')
+    expense_current_month = current_month_entries.filter(entry_type=FinancialEntry.EXPENSE).aggregate(Sum('amount'))['amount__sum'] or Decimal('0.00')
+
+    # Asegurarse de que los valores sean flotantes para Chart.js
+    income_current_month_float = float(income_current_month)
+    expense_current_month_float = float(expense_current_month)
+
     return render(
         request,
         "dashboard.html",
@@ -318,8 +353,177 @@ def dashboard_view(request):
             "latest_entries": latest_entries,
             "latest_audit_events": latest_audit_events,
             "latest_rates": latest_rates,
+            "income_current_month": income_current_month_float,
+            "expense_current_month": expense_current_month_float,
         },
     )
+
+
+@login_required
+@tenant_required
+@tenant_group_required("Administrador de empresa")
+def module_settings(request):
+    """
+    Vista para que administradores vean detalles técnicos de sus módulos habilitados.
+    """
+    tenant = getattr(request, "tenant", None)
+    enabled_modules_list = getattr(tenant, "enabled_modules", [])
+    module_labels = dict(AVAILABLE_MODULES)
+    
+    # Mapa inverso de grupos para búsqueda rápida en el template
+    module_to_group = {}
+    for group_name, mods in MODULE_GROUPS.items():
+        for m in mods:
+            module_to_group[m] = group_name
+
+    details = []
+    for mod_id in enabled_modules_list:
+        details.append({
+            "key": mod_id,
+            "label": module_labels.get(mod_id, mod_id),
+            "group": module_to_group.get(mod_id, "Sin categoría"),
+            "is_business": mod_id in MODULES_BUSINESS,
+            "is_individual": mod_id in MODULES_INDIVIDUAL,
+        })
+
+    return render(
+        request,
+        "tenant/module_settings.html",
+        {"module_details": details, "page_title": "Ajustes de Módulos"},
+    )
+
+
+@login_required
+@tenant_required
+@module_enabled_required("budget")
+def budget_list(request):
+    budgets = Budget.objects.filter(business=Business.objects.first()).order_by("-period_start_date")
+    status = request.GET.get("status")
+    if status:
+        budgets = budgets.filter(status=status)
+
+    page_num = request.GET.get("page", 1)
+    paginator = Paginator(budgets, 25)
+    budgets_page = paginator.get_page(page_num)
+
+    return render(
+        request,
+        "tenant/budget_list.html",
+        {
+            "budgets": budgets_page,
+            "status_choices": Budget.STATUS_CHOICES,
+            "selected_status": status or "",
+            "page_title": "Listado de Presupuestos",
+        },
+    )
+
+
+@login_required
+@tenant_required
+@module_enabled_required("budget")
+@tenant_group_required("Administrador de empresa", "Operador financiero")
+def budget_create(request):
+    business = Business.objects.first()
+    if business is None:
+        messages.error(request, "Primero debes crear la empresa asociada a este tenant.")
+        return redirect("dashboard")
+
+    if request.method == "POST":
+        form = BudgetForm(request.POST)
+        formset = BudgetLineFormSet(request.POST, instance=Budget())
+        if form.is_valid() and formset.is_valid():
+            try:
+                with transaction.atomic():
+                    budget = form.save(commit=False)
+                    budget.business = business
+                    budget.created_by = request.user
+                    budget.save()
+
+                    formset.instance = budget
+                    formset.save()
+
+                    budget.calculate_total_budgeted_amount() # Recalculate total after lines are saved
+                    budget.save(update_fields=['total_budgeted_amount'])
+
+                    record_audit_event(
+                        request, AuditEvent.CREATE, "budget",
+                        f"Presupuesto creado: {budget.name}",
+                        entity_id=budget.pk
+                    )
+                    messages.success(request, "Presupuesto creado correctamente.")
+                    return redirect("budget_detail", budget_id=budget.pk)
+            except Exception as e:
+                messages.error(request, f"Error al crear el presupuesto: {str(e)}")
+        else:
+            messages.error(request, "Por favor, corrija los errores en el formulario.")
+    else:
+        form = BudgetForm()
+        formset = BudgetLineFormSet(instance=Budget())
+
+    return render(request, "tenant/budget_form.html", {
+        "form": form,
+        "formset": formset,
+        "page_title": "Crear Nuevo Presupuesto",
+        "business": business,
+    })
+
+
+@login_required
+@tenant_required
+@module_enabled_required("budget")
+@tenant_group_required("Administrador de empresa", "Operador financiero")
+def budget_edit(request, budget_id):
+    budget = Budget.objects.filter(pk=budget_id, business=Business.objects.first()).first()
+    if not budget:
+        messages.error(request, "Presupuesto no encontrado.")
+        return redirect("budget_list")
+
+    if request.method == "POST":
+        form = BudgetForm(request.POST, instance=budget)
+        formset = BudgetLineFormSet(request.POST, instance=budget)
+        if form.is_valid() and formset.is_valid():
+            try:
+                with transaction.atomic():
+                    budget = form.save()
+                    formset.save()
+
+                    budget.calculate_total_budgeted_amount() # Recalculate total after lines are saved
+                    budget.save(update_fields=['total_budgeted_amount'])
+
+                    record_audit_event(
+                        request, AuditEvent.UPDATE, "budget",
+                        f"Presupuesto actualizado: {budget.name}",
+                        entity_id=budget.pk
+                    )
+                    messages.success(request, "Presupuesto actualizado correctamente.")
+                    return redirect("budget_detail", budget_id=budget.pk)
+            except Exception as e:
+                messages.error(request, f"Error al actualizar el presupuesto: {str(e)}")
+        else:
+            messages.error(request, "Por favor, corrija los errores en el formulario.")
+    else:
+        form = BudgetForm(instance=budget)
+        formset = BudgetLineFormSet(instance=budget)
+
+    return render(request, "tenant/budget_form.html", {
+        "form": form,
+        "formset": formset,
+        "page_title": f"Editar Presupuesto: {budget.name}",
+        "budget": budget,
+        "business": budget.business,
+    })
+
+
+@login_required
+@tenant_required
+@module_enabled_required("budget")
+def budget_detail(request, budget_id):
+    budget = Budget.objects.filter(pk=budget_id, business=Business.objects.first()).first()
+    if not budget:
+        messages.error(request, "Presupuesto no encontrado.")
+        return redirect("budget_list")
+    
+    return render(request, "tenant/budget_detail.html", {"budget": budget, "page_title": f"Detalle Presupuesto: {budget.name}"})
 
 
 @login_required
@@ -1233,6 +1437,7 @@ def business_list(request):
 
 @login_required
 @tenant_required
+@module_enabled_required("invoices")
 def invoice_list(request):
     invoices = Invoice.objects.select_related(
         "third_party", "created_by", "project"
@@ -1270,6 +1475,7 @@ def invoice_list(request):
 
 @login_required
 @tenant_required
+@module_enabled_required("invoices")
 @tenant_group_required("Administrador de empresa", "Operador financiero")
 def invoice_create(request):
     business = Business.objects.first()
@@ -1288,7 +1494,7 @@ def invoice_create(request):
             invoice.created_by = request.user
 
             # Procesar items
-            items_data = request.POST.getlist("item_description")
+            items_data = request.POST.getlist("item_description") # B2 FIX: Removed duplicated function
             quantities = request.POST.getlist("item_quantity")
             prices = request.POST.getlist("item_price")
 
@@ -1312,7 +1518,8 @@ def invoice_create(request):
                             subtotal += item_subtotal
 
                     invoice.calculate_totals(subtotal)
-                    invoice.save()
+                    invoice.save(update_fields=["subtotal", "tax_amount", "retention_amount", "total"])
+                    invoice.tax_rules.set(form.cleaned_data["tax_rules"])
 
                     record_audit_event(
                         request,
@@ -1347,6 +1554,7 @@ def invoice_create(request):
 
 @login_required
 @tenant_required
+@module_enabled_required("invoices")
 @tenant_group_required("Administrador de empresa", "Operador financiero")
 def invoice_edit(request, invoice_id):
     invoice = Invoice.objects.select_related("business").filter(pk=invoice_id).first()
@@ -1358,16 +1566,15 @@ def invoice_edit(request, invoice_id):
     if request.method == "POST":
         form = InvoiceForm(request.POST, instance=invoice, tenant_type=tenant_type)
         if form.is_valid():
-            invoice = form.save(commit=False)
-
-            # Limpiar items anteriores y crear nuevos
-            invoice.items.all().delete()
-            items_data = request.POST.getlist("item_description")
-            quantities = request.POST.getlist("item_quantity")
-            prices = request.POST.getlist("item_price")
-
             try:
                 with transaction.atomic():
+                    invoice = form.save(commit=False)
+                    # Limpiar items anteriores y crear nuevos dentro de la transacción
+                    invoice.items.all().delete()
+                    items_data = request.POST.getlist("item_description")
+                    quantities = request.POST.getlist("item_quantity")
+                    prices = request.POST.getlist("item_price")
+                    
                     invoice.save()
                     subtotal = Decimal("0")
 
@@ -1386,7 +1593,8 @@ def invoice_edit(request, invoice_id):
                             subtotal += item_subtotal
 
                     invoice.calculate_totals(subtotal)
-                    invoice.save()
+                    invoice.save(update_fields=["subtotal", "tax_amount", "retention_amount", "total"])
+                    invoice.tax_rules.set(form.cleaned_data["tax_rules"])
 
                     record_audit_event(
                         request,
@@ -1422,6 +1630,7 @@ def invoice_edit(request, invoice_id):
 
 @login_required
 @tenant_required
+@module_enabled_required("invoices")
 def invoice_detail(request, invoice_id):
     invoice = (
         Invoice.objects.select_related("business", "third_party", "created_by")
@@ -1437,6 +1646,7 @@ def invoice_detail(request, invoice_id):
 
 @login_required
 @tenant_required
+@module_enabled_required("invoices")
 def invoice_pdf(request, invoice_id):
     """Generate PDF invoice"""
     try:
@@ -1592,6 +1802,7 @@ def invoice_pdf(request, invoice_id):
 
 @login_required
 @tenant_required
+@module_enabled_required("invoices")
 @tenant_group_required("Administrador de empresa", "Operador financiero")
 @require_POST
 def invoice_delete(request, invoice_id):
@@ -1600,8 +1811,8 @@ def invoice_delete(request, invoice_id):
         messages.error(request, "Factura no encontrada.")
         return redirect("invoice_list")
 
-    invoice_number = invoice.invoice_number
-    invoice.delete()
+    # B2 FIX: Removed direct invoice.delete() in favor of invoice_cancel # B2 FIX: Removed duplicated function
+    messages.error(request, "La eliminación directa de facturas no está permitida. Utilice la opción de anular.")
 
     record_audit_event(
         request,
@@ -1610,12 +1821,43 @@ def invoice_delete(request, invoice_id):
         f"Factura eliminada: {invoice_number}",
         entity_id=invoice_id,
     )
-    messages.success(request, "Factura eliminada correctamente.")
+    # messages.success(request, "Factura eliminada correctamente.") # Removed success message for deletion
     return redirect("invoice_list")
 
 
 @login_required
 @tenant_required
+@module_enabled_required("invoices")
+@tenant_group_required("Administrador de empresa", "Operador financiero")
+@require_POST
+def invoice_cancel(request, invoice_id):
+    """Anula la factura y su movimiento financiero asociado sin borrar físicamente."""
+    invoice = Invoice.objects.filter(pk=invoice_id).first()
+    if not invoice:
+        messages.error(request, "Factura no encontrada.")
+        return redirect("invoice_list")
+    
+    with transaction.atomic():
+        invoice.status = Invoice.CANCELLED
+        invoice.save(update_fields=["status"])
+        
+        if invoice.financial_entry:
+            invoice.financial_entry.status = FinancialEntry.CANCELLED
+            invoice.financial_entry.save(update_fields=["status"])
+            
+        record_audit_event(
+            request, AuditEvent.UPDATE, "invoice",
+            f"Factura anulada: {invoice.invoice_number}",
+            entity_id=invoice.pk
+        )
+    
+    messages.success(request, f"Factura {invoice.invoice_number} anulada correctamente.")
+    return redirect("invoice_detail", invoice_id=invoice.pk)
+
+
+@login_required
+@tenant_required
+@module_enabled_required("invoices")
 def quote_list(request):
     quotes = Quote.objects.select_related("project", "third_party", "created_by", "business").all()
     status = request.GET.get("status")
@@ -1651,6 +1893,7 @@ def quote_list(request):
 
 @login_required
 @tenant_required
+@module_enabled_required("invoices")
 @tenant_group_required("Administrador de empresa", "Operador financiero")
 def quote_create(request):
     business = Business.objects.first()
@@ -1693,7 +1936,7 @@ def quote_create(request):
                         subtotal += item_subtotal
 
                 quote.calculate_totals(subtotal)
-                quote.save()
+                quote.save(update_fields=["subtotal", "tax_amount", "retention_amount", "total"])
 
                 record_audit_event(
                     request,
@@ -1719,6 +1962,67 @@ def quote_create(request):
 
 @login_required
 @tenant_required
+@module_enabled_required("invoices")
+@tenant_group_required("Administrador de empresa", "Operador financiero")
+def quote_edit(request, quote_id):
+    quote = Quote.objects.select_related("business").filter(pk=quote_id).first()
+    if not quote:
+        messages.error(request, "Cotización no encontrada.")
+        return redirect("quote_list")
+    
+    if quote.status not in [Quote.DRAFT]:
+        messages.warning(request, "Solo se pueden editar cotizaciones en estado borrador.")
+        return redirect("quote_detail", quote_id=quote.pk)
+
+    tenant_type = getattr(request.tenant, "tenant_type", Tenant.TYPE_BUSINESS)
+    if request.method == "POST":
+        form = QuoteForm(request.POST, instance=quote, tenant_type=tenant_type)
+        if form.is_valid():
+            try:
+                with transaction.atomic():
+                    quote = form.save()
+                    quote.items.all().delete()
+                    
+                    items_data = request.POST.getlist("item_description")
+                    quantities = request.POST.getlist("item_quantity")
+                    prices = request.POST.getlist("item_price")
+                    subtotal = Decimal("0")
+
+                    for desc, qty, price in zip(items_data, quantities, prices):
+                        if desc and qty and price:
+                            qty_dec = Decimal(qty)
+                            price_dec = Decimal(price)
+                            item_subtotal = qty_dec * price_dec
+                            QuoteItem.objects.create(
+                                quote=quote, description=desc, quantity=qty_dec,
+                                unit_price=price_dec, subtotal=item_subtotal
+                            )
+                            subtotal += item_subtotal
+
+                    quote.calculate_totals(subtotal)
+                    quote.save(update_fields=["subtotal", "tax_amount", "retention_amount", "total"])
+                    messages.success(request, "Cotización actualizada correctamente.")
+                    return redirect("quote_detail", quote_id=quote.pk)
+            except Exception as e:
+                messages.error(request, f"Error al actualizar: {str(e)}")
+    else:
+        form = QuoteForm(instance=quote, tenant_type=tenant_type)
+
+    return render(
+        request,
+        "tenant/quote_form.html",
+        {
+            "form": form,
+            "page_title": "Editar cotización",
+            "quote": quote,
+            "business": quote.business,
+        },
+    )
+
+
+@login_required
+@tenant_required
+@module_enabled_required("invoices")
 def quote_detail(request, quote_id):
     quote = (
         Quote.objects.select_related("business", "project", "third_party", "created_by")
@@ -1733,6 +2037,7 @@ def quote_detail(request, quote_id):
 
 @login_required
 @tenant_required
+@module_enabled_required("invoices")
 @tenant_group_required("Administrador de empresa", "Operador financiero")
 @require_POST
 def quote_accept(request, quote_id):
@@ -1808,7 +2113,7 @@ def _convert_quote_to_invoice(quote: Quote, created_by_user):
             subtotal += item_subtotal
 
         invoice.calculate_totals(subtotal)
-        invoice.save()
+        invoice.save(update_fields=["subtotal", "tax_amount", "total"]) # Refactor: save after calculate_totals
 
         # FinancialEntry
         financial_entry = FinancialEntry.objects.create(
@@ -1837,11 +2142,16 @@ def _convert_quote_to_invoice(quote: Quote, created_by_user):
         invoice.financial_entry = financial_entry
         invoice.save(update_fields=["financial_entry"])
 
+        # Copy tax rules from quote to invoice
+        invoice.tax_rules.set(quote.tax_rules.all())
+
+
     return quote.converted_invoice, quote.financial_entry
 
 
 @login_required
 @tenant_required
+@module_enabled_required("invoices")
 @tenant_group_required("Administrador de empresa", "Operador financiero")
 @require_POST
 def quote_convert_to_invoice(request, quote_id):
@@ -1862,6 +2172,524 @@ def quote_convert_to_invoice(request, quote_id):
 
     messages.success(request, "Cotización convertida a factura correctamente.")
     return redirect("invoice_detail", invoice_id=invoice.pk)
+
+
+@login_required
+@tenant_required
+@module_enabled_required("credit_notes")
+def credit_note_list(request):
+    credit_notes = CreditNote.objects.select_related(
+        "invoice", "third_party", "created_by", "business"
+    ).all()
+    status = request.GET.get("status")
+    invoice_id = request.GET.get("invoice")
+    issue_from = request.GET.get("issue_from")
+    issue_to = request.GET.get("issue_to")
+
+    if status:
+        credit_notes = credit_notes.filter(status=status)
+    if invoice_id:
+        credit_notes = credit_notes.filter(invoice_id=invoice_id)
+    if issue_from:
+        credit_notes = credit_notes.filter(issue_date__gte=issue_from)
+    if issue_to:
+        credit_notes = credit_notes.filter(issue_date__lte=issue_to)
+
+    page_num = request.GET.get("page", 1)
+    paginator = Paginator(credit_notes.order_by("-issue_date"), 25)
+    credit_notes_page = paginator.get_page(page_num)
+
+    return render(
+        request,
+        "tenant/credit_note_list.html",
+        {
+            "credit_notes": credit_notes_page,
+            "status_choices": CreditNote.STATUS_CHOICES,
+            "invoice_choices": Invoice.objects.all().order_by("-issue_date"),
+            "selected_status": status or "",
+            "selected_invoice": invoice_id or "",
+        },
+    )
+
+
+@login_required
+@tenant_required
+@module_enabled_required("credit_notes")
+@tenant_group_required("Administrador de empresa", "Operador financiero")
+def credit_note_create(request):
+    business = Business.objects.first()
+    if business is None:
+        messages.error(
+            request, "Primero debes crear la empresa asociada a este tenant."
+        )
+        return redirect("dashboard")
+
+    tenant_type = getattr(request.tenant, "tenant_type", Tenant.TYPE_BUSINESS)
+    if request.method == "POST":
+        form = CreditNoteForm(request.POST, tenant_type=tenant_type)
+        if form.is_valid():
+            try:
+                with transaction.atomic():
+                    credit_note = form.save(commit=False)
+                    credit_note.business = business
+                    credit_note.created_by = request.user
+                    credit_note.status = CreditNote.ISSUED # Credit notes are typically issued directly
+
+                    items_data = request.POST.getlist("item_description")
+                    quantities = request.POST.getlist("item_quantity")
+                    prices = request.POST.getlist("item_price")
+
+                    credit_note.save() # Save to generate number
+                    subtotal = Decimal("0")
+
+                    for desc, qty, price in zip(items_data, quantities, prices):
+                        if desc and qty and price:
+                            qty_dec = Decimal(qty)
+                            price_dec = Decimal(price)
+                            item_subtotal = qty_dec * price_dec
+                            CreditNoteItem.objects.create(
+                                credit_note=credit_note,
+                                description=desc,
+                                quantity=qty_dec,
+                                unit_price=price_dec,
+                                subtotal=item_subtotal,
+                            )
+                            subtotal += item_subtotal
+
+                    credit_note.calculate_totals(subtotal)
+                    credit_note.save(update_fields=["subtotal", "tax_amount", "retention_amount", "total"])
+
+                    # Create FinancialEntry for the credit note
+                    financial_entry = FinancialEntry.objects.create(
+                        business=business,
+                        third_party=credit_note.third_party,
+                        created_by=request.user,
+                        entry_type=FinancialEntry.ACCOUNT_PAYABLE, # Credit note reduces AR or increases AP
+                        status=FinancialEntry.PENDING,
+                        concept=f"Nota de Crédito {credit_note.credit_note_number} (Factura {credit_note.invoice.invoice_number if credit_note.invoice else 'N/A'})",
+                        amount=credit_note.total,
+                        currency=credit_note.currency,
+                        entry_date=credit_note.issue_date,
+                        due_date=credit_note.issue_date, # Due date can be same as issue date for immediate effect
+                        notes=credit_note.notes or "",
+                        personal=False,
+                    )
+                    credit_note.financial_entry = financial_entry
+                    credit_note.save(update_fields=["financial_entry"])
+
+                    record_audit_event(
+                        request,
+                        AuditEvent.CREATE,
+                        "credit_note",
+                        f"Nota de Crédito creada: {credit_note.credit_note_number}",
+                        entity_id=credit_note.pk,
+                        metadata={
+                            "credit_note_number": credit_note.credit_note_number,
+                            "total": str(credit_note.total),
+                        },
+                    )
+                    messages.success(request, "Nota de Crédito creada correctamente.")
+                    return redirect("credit_note_detail", credit_note_id=credit_note.pk)
+            except InvalidOperation:
+                messages.error(request, "Error al crear nota de crédito: cantidad o precio inválido.")
+            except Exception as e:
+                messages.error(request, f"Error al crear nota de crédito: {str(e)}")
+    else:
+        form = CreditNoteForm(tenant_type=tenant_type)
+
+    return render(
+        request,
+        "tenant/credit_note_form.html",
+        {
+            "form": form,
+            "business": business,
+            "page_title": "Nueva Nota de Crédito",
+        },
+    )
+
+
+@login_required
+@tenant_required
+@module_enabled_required("credit_notes")
+@tenant_group_required("Administrador de empresa", "Operador financiero")
+def credit_note_edit(request, credit_note_id):
+    credit_note = CreditNote.objects.select_related("business", "financial_entry").filter(pk=credit_note_id).first()
+    if not credit_note:
+        messages.error(request, "Nota de Crédito no encontrada.")
+        return redirect("credit_note_list")
+    
+    if credit_note.status == CreditNote.CANCELLED:
+        messages.warning(request, "No se puede editar una nota de crédito anulada.")
+        return redirect("credit_note_detail", credit_note_id=credit_note.pk)
+
+    tenant_type = getattr(request.tenant, "tenant_type", Tenant.TYPE_BUSINESS)
+    if request.method == "POST":
+        form = CreditNoteForm(request.POST, instance=credit_note, tenant_type=tenant_type)
+        if form.is_valid():
+            try:
+                with transaction.atomic():
+                    credit_note = form.save(commit=False)
+                    credit_note.items.all().delete()
+                    
+                    items_data = request.POST.getlist("item_description")
+                    quantities = request.POST.getlist("item_quantity")
+                    prices = request.POST.getlist("item_price")
+                    
+                    credit_note.save()
+                    subtotal = Decimal("0")
+
+                    for desc, qty, price in zip(items_data, quantities, prices):
+                        if desc and qty and price:
+                            qty_dec = Decimal(qty)
+                            price_dec = Decimal(price)
+                            item_subtotal = qty_dec * price_dec
+                            CreditNoteItem.objects.create(
+                                credit_note=credit_note,
+                                description=desc,
+                                quantity=qty_dec,
+                                unit_price=price_dec,
+                                subtotal=item_subtotal,
+                            )
+                            subtotal += item_subtotal
+
+                    credit_note.calculate_totals(subtotal)
+                    credit_note.save(update_fields=["subtotal", "tax_amount", "retention_amount", "total"])
+
+                    if credit_note.financial_entry:
+                        fe = credit_note.financial_entry
+                        fe.third_party = credit_note.third_party
+                        fe.concept = f"Nota de Crédito {credit_note.credit_note_number} (Factura {credit_note.invoice.invoice_number if credit_note.invoice else 'N/A'})"
+                        fe.amount = credit_note.total
+                        fe.currency = credit_note.currency
+                        fe.entry_date = credit_note.issue_date
+                        fe.due_date = credit_note.issue_date
+                        fe.notes = credit_note.notes or ""
+                        fe.save()
+
+                    record_audit_event(
+                        request,
+                        AuditEvent.UPDATE,
+                        "credit_note",
+                        f"Nota de Crédito actualizada: {credit_note.credit_note_number}",
+                        entity_id=credit_note.pk,
+                    )
+                    messages.success(request, "Nota de Crédito actualizada correctamente.")
+                    return redirect("credit_note_detail", credit_note_id=credit_note.pk)
+            except Exception as e:
+                messages.error(request, f"Error al actualizar: {str(e)}")
+    else:
+        form = CreditNoteForm(instance=credit_note, tenant_type=tenant_type)
+
+    return render(request, "tenant/credit_note_form.html", {
+        "form": form,
+        "credit_note": credit_note,
+        "business": credit_note.business,
+        "page_title": "Editar Nota de Crédito"
+    })
+
+
+@login_required
+@tenant_required
+@module_enabled_required("credit_notes")
+@tenant_group_required("Administrador de empresa", "Operador financiero")
+@require_POST
+def credit_note_cancel(request, credit_note_id):
+    credit_note = CreditNote.objects.filter(pk=credit_note_id).first()
+    if not credit_note:
+        messages.error(request, "Nota de Crédito no encontrada.")
+        return redirect("credit_note_list")
+    
+    with transaction.atomic():
+        credit_note.status = CreditNote.CANCELLED
+        credit_note.save(update_fields=["status"])
+        
+        if credit_note.financial_entry:
+            credit_note.financial_entry.status = FinancialEntry.CANCELLED
+            credit_note.financial_entry.save(update_fields=["status"])
+            
+        record_audit_event(
+            request, AuditEvent.UPDATE, "credit_note",
+            f"Nota de Crédito anulada: {credit_note.credit_note_number}",
+            entity_id=credit_note.pk
+        )
+    
+    messages.success(request, f"Nota de Crédito {credit_note.credit_note_number} anulada correctamente.")
+    return redirect("credit_note_detail", credit_note_id=credit_note.pk)
+
+
+@login_required
+@tenant_required
+@module_enabled_required("credit_notes")
+def credit_note_detail(request, credit_note_id):
+    credit_note = (
+        CreditNote.objects.select_related("business", "invoice", "third_party", "created_by")
+        .filter(pk=credit_note_id)
+        .first()
+    )
+    if credit_note is None:
+        messages.error(request, "Nota de Crédito no encontrada.")
+        return redirect("credit_note_list")
+
+    return render(request, "tenant/credit_note_detail.html", {"credit_note": credit_note})
+
+
+@login_required
+@tenant_required
+@module_enabled_required("debit_notes")
+def debit_note_list(request):
+    debit_notes = DebitNote.objects.select_related(
+        "invoice", "third_party", "created_by", "business"
+    ).all()
+    status = request.GET.get("status")
+    invoice_id = request.GET.get("invoice")
+    issue_from = request.GET.get("issue_from")
+    issue_to = request.GET.get("issue_to")
+
+    if status:
+        debit_notes = debit_notes.filter(status=status)
+    if invoice_id:
+        debit_notes = debit_notes.filter(invoice_id=invoice_id)
+    if issue_from:
+        debit_notes = debit_notes.filter(issue_date__gte=issue_from)
+    if issue_to:
+        debit_notes = debit_notes.filter(issue_date__lte=issue_to)
+
+    page_num = request.GET.get("page", 1)
+    paginator = Paginator(debit_notes.order_by("-issue_date"), 25)
+    debit_notes_page = paginator.get_page(page_num)
+
+    return render(
+        request,
+        "tenant/debit_note_list.html",
+        {
+            "debit_notes": debit_notes_page,
+            "status_choices": DebitNote.STATUS_CHOICES,
+            "invoice_choices": Invoice.objects.all().order_by("-issue_date"),
+            "selected_status": status or "",
+            "selected_invoice": invoice_id or "",
+        },
+    )
+
+
+@login_required
+@tenant_required
+@module_enabled_required("debit_notes")
+@tenant_group_required("Administrador de empresa", "Operador financiero")
+def debit_note_create(request):
+    business = Business.objects.first()
+    if business is None:
+        messages.error(
+            request, "Primero debes crear la empresa asociada a este tenant."
+        )
+        return redirect("dashboard")
+
+    tenant_type = getattr(request.tenant, "tenant_type", Tenant.TYPE_BUSINESS)
+    if request.method == "POST":
+        form = DebitNoteForm(request.POST, tenant_type=tenant_type)
+        if form.is_valid():
+            try:
+                with transaction.atomic():
+                    debit_note = form.save(commit=False)
+                    debit_note.business = business
+                    debit_note.created_by = request.user
+                    debit_note.status = DebitNote.ISSUED # Debit notes are typically issued directly
+
+                    items_data = request.POST.getlist("item_description")
+                    quantities = request.POST.getlist("item_quantity")
+                    prices = request.POST.getlist("item_price")
+
+                    debit_note.save() # Save to generate number
+                    subtotal = Decimal("0")
+
+                    for desc, qty, price in zip(items_data, quantities, prices):
+                        if desc and qty and price:
+                            qty_dec = Decimal(qty)
+                            price_dec = Decimal(price)
+                            item_subtotal = qty_dec * price_dec
+                            DebitNoteItem.objects.create(
+                                debit_note=debit_note,
+                                description=desc,
+                                quantity=qty_dec,
+                                unit_price=price_dec,
+                                subtotal=item_subtotal,
+                            )
+                            subtotal += item_subtotal
+
+                    debit_note.calculate_totals(subtotal)
+                    debit_note.save(update_fields=["subtotal", "tax_amount", "retention_amount", "total"])
+
+                    # Create FinancialEntry for the debit note
+                    financial_entry = FinancialEntry.objects.create(
+                        business=business,
+                        third_party=debit_note.third_party,
+                        created_by=request.user,
+                        entry_type=FinancialEntry.ACCOUNT_RECEIVABLE, # Debit note increases AR or reduces AP
+                        status=FinancialEntry.PENDING,
+                        concept=f"Nota de Débito {debit_note.debit_note_number} (Factura {debit_note.invoice.invoice_number if debit_note.invoice else 'N/A'})",
+                        amount=debit_note.total,
+                        currency=debit_note.currency,
+                        entry_date=debit_note.issue_date,
+                        due_date=debit_note.issue_date, # Due date can be same as issue date for immediate effect
+                        notes=debit_note.notes or "",
+                        personal=False,
+                    )
+                    debit_note.financial_entry = financial_entry
+                    debit_note.save(update_fields=["financial_entry"])
+
+                    record_audit_event(
+                        request,
+                        AuditEvent.CREATE,
+                        "debit_note",
+                        f"Nota de Débito creada: {debit_note.debit_note_number}",
+                        entity_id=debit_note.pk,
+                        metadata={
+                            "debit_note_number": debit_note.debit_note_number,
+                            "total": str(debit_note.total),
+                        },
+                    )
+                    messages.success(request, "Nota de Débito creada correctamente.")
+                    return redirect("debit_note_detail", debit_note_id=debit_note.pk)
+            except InvalidOperation:
+                messages.error(request, "Error al crear nota de débito: cantidad o precio inválido.")
+            except Exception as e:
+                messages.error(request, f"Error al crear nota de débito: {str(e)}")
+    else:
+        form = DebitNoteForm(tenant_type=tenant_type)
+
+    return render(
+        request,
+        "tenant/debit_note_form.html",
+        {
+            "form": form,
+            "business": business,
+            "page_title": "Nueva Nota de Débito",
+        },
+    )
+
+
+@login_required
+@tenant_required
+@module_enabled_required("debit_notes")
+@tenant_group_required("Administrador de empresa", "Operador financiero")
+def debit_note_edit(request, debit_note_id):
+    debit_note = DebitNote.objects.select_related("business", "financial_entry").filter(pk=debit_note_id).first()
+    if not debit_note:
+        messages.error(request, "Nota de Débito no encontrada.")
+        return redirect("debit_note_list")
+    
+    if debit_note.status == DebitNote.CANCELLED:
+        messages.warning(request, "No se puede editar una nota de débito anulada.")
+        return redirect("debit_note_detail", debit_note_id=debit_note.pk)
+
+    tenant_type = getattr(request.tenant, "tenant_type", Tenant.TYPE_BUSINESS)
+    if request.method == "POST":
+        form = DebitNoteForm(request.POST, instance=debit_note, tenant_type=tenant_type)
+        if form.is_valid():
+            try:
+                with transaction.atomic():
+                    debit_note = form.save(commit=False)
+                    debit_note.items.all().delete()
+                    
+                    items_data = request.POST.getlist("item_description")
+                    quantities = request.POST.getlist("item_quantity")
+                    prices = request.POST.getlist("item_price")
+                    
+                    debit_note.save()
+                    subtotal = Decimal("0")
+
+                    for desc, qty, price in zip(items_data, quantities, prices):
+                        if desc and qty and price:
+                            qty_dec = Decimal(qty)
+                            price_dec = Decimal(price)
+                            item_subtotal = qty_dec * price_dec
+                            DebitNoteItem.objects.create(
+                                debit_note=debit_note,
+                                description=desc,
+                                quantity=qty_dec,
+                                unit_price=price_dec,
+                                subtotal=item_subtotal,
+                            )
+                            subtotal += item_subtotal
+
+                    debit_note.calculate_totals(subtotal)
+                    debit_note.save(update_fields=["subtotal", "tax_amount", "retention_amount", "total"])
+
+                    if debit_note.financial_entry:
+                        fe = debit_note.financial_entry
+                        fe.third_party = debit_note.third_party
+                        fe.concept = f"Nota de Débito {debit_note.debit_note_number} (Factura {debit_note.invoice.invoice_number if debit_note.invoice else 'N/A'})"
+                        fe.amount = debit_note.total
+                        fe.currency = debit_note.currency
+                        fe.entry_date = debit_note.issue_date
+                        fe.due_date = debit_note.issue_date
+                        fe.notes = debit_note.notes or ""
+                        fe.save()
+
+                    record_audit_event(
+                        request,
+                        AuditEvent.UPDATE,
+                        "debit_note",
+                        f"Nota de Débito actualizada: {debit_note.debit_note_number}",
+                        entity_id=debit_note.pk,
+                    )
+                    messages.success(request, "Nota de Débito actualizada correctamente.")
+                    return redirect("debit_note_detail", debit_note_id=debit_note.pk)
+            except Exception as e:
+                messages.error(request, f"Error al actualizar: {str(e)}")
+    else:
+        form = DebitNoteForm(instance=debit_note, tenant_type=tenant_type)
+
+    return render(request, "tenant/debit_note_form.html", {
+        "form": form,
+        "debit_note": debit_note,
+        "business": debit_note.business,
+        "page_title": "Editar Nota de Débito"
+    })
+
+
+@login_required
+@tenant_required
+@module_enabled_required("debit_notes")
+@tenant_group_required("Administrador de empresa", "Operador financiero")
+@require_POST
+def debit_note_cancel(request, debit_note_id):
+    debit_note = DebitNote.objects.filter(pk=debit_note_id).first()
+    if not debit_note:
+        messages.error(request, "Nota de Débito no encontrada.")
+        return redirect("debit_note_list")
+    
+    with transaction.atomic():
+        debit_note.status = DebitNote.CANCELLED
+        debit_note.save(update_fields=["status"])
+        
+        if debit_note.financial_entry:
+            debit_note.financial_entry.status = FinancialEntry.CANCELLED
+            debit_note.financial_entry.save(update_fields=["status"])
+            
+        record_audit_event(
+            request, AuditEvent.UPDATE, "debit_note",
+            f"Nota de Débito anulada: {debit_note.debit_note_number}",
+            entity_id=debit_note.pk
+        )
+    
+    messages.success(request, f"Nota de Débito {debit_note.debit_note_number} anulada correctamente.")
+    return redirect("debit_note_detail", debit_note_id=debit_note.pk)
+
+
+@login_required
+@tenant_required
+@module_enabled_required("debit_notes")
+def debit_note_detail(request, debit_note_id):
+    debit_note = (
+        DebitNote.objects.select_related("business", "invoice", "third_party", "created_by")
+        .filter(pk=debit_note_id)
+        .first()
+    )
+    if debit_note is None:
+        messages.error(request, "Nota de Débito no encontrada.")
+        return redirect("debit_note_list")
+
+    return render(request, "tenant/debit_note_detail.html", {"debit_note": debit_note})
 
 
 def _convert_amount(amount, from_currency, to_currency, rate_date):
@@ -1887,6 +2715,8 @@ def _convert_amount(amount, from_currency, to_currency, rate_date):
     return amount_local / to_rate.rate_to_local
 
 
+@login_required
+@tenant_required
 def cartera_dashboard(request):
     """
     Dashboard explícito de cartera (Accounts Receivable / Payable).
@@ -2140,6 +2970,184 @@ def cartera_dashboard(request):
     return render(request, "tenant/cartera_dashboard.html", context)
 
 
+@login_required
+@tenant_required
+@module_enabled_required("finances")
+@tenant_group_required("Administrador de empresa", "Operador financiero")
+def cartera_aging_excel_export(request):
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, Border, Side, PatternFill
+        from openpyxl.utils import get_column_letter
+    except ImportError:
+        messages.error(
+            request, "La librería 'openpyxl' no está instalada en el servidor. Contacte a soporte."
+        )
+        return redirect("cartera_dashboard")
+
+    today = date.today()
+    type_filter = request.GET.get("type", "receivable")  # receivable | payable
+    entry_type = FinancialEntry.ACCOUNT_RECEIVABLE if type_filter == "receivable" else FinancialEntry.ACCOUNT_PAYABLE
+
+    entries_qs = (
+        FinancialEntry.objects.select_related("third_party")
+        .filter(
+            entry_type=entry_type,
+            status__in=[FinancialEntry.PENDING, FinancialEntry.PARTIAL],
+            due_date__isnull=False,
+        )
+        .exclude(due_date=None)
+    )
+
+    payments_by_entry = {}
+    payments_qs = Payment.objects.filter(financial_entry__in=entries_qs).order_by("payment_date", "-created_at")
+    for p in payments_qs:
+        payments_by_entry.setdefault(p.financial_entry_id, []).append(p)
+
+    def compute_remaining(fin_entry: FinancialEntry):
+        paid_sum_in_entry_currency = Decimal("0")
+        for p in payments_by_entry.get(fin_entry.id, []):
+            try:
+                paid_sum_in_entry_currency += _convert_amount(
+                    p.amount,
+                    p.currency,
+                    fin_entry.currency,
+                    p.payment_date,
+                )
+            except ValueError:
+                # Si la conversión de moneda falla, se ignora este pago para el cálculo del restante.
+                # Esto evita un error crítico en el reporte, pero puede indicar datos faltantes.
+                pass
+            except Exception:
+                # Captura otros errores potenciales, ignora el pago para el cálculo del restante.
+                pass
+        remaining = fin_entry.amount - paid_sum_in_entry_currency
+        return remaining
+
+    # Agrega datos por (third_party_id, currency) y rango de vencimiento
+    third_party_aging_data = {}  # {(third_party_id, currency): {'name': '...', 'total_outstanding': Decimal, 'current': Decimal, 'bucket_30': Decimal, ...}}
+
+    for entry in entries_qs:
+        try:
+            remaining = compute_remaining(entry)
+        except ValueError as e:
+            # Si hay un error de conversión de moneda para la entrada principal, se salta esta entrada.
+            print(f"Skipping financial entry {entry.id} due to currency conversion error: {e}")
+            continue
+
+        if remaining <= 0:
+            continue
+
+        tp_id = entry.third_party_id
+        currency = entry.currency
+        key = (tp_id, currency)
+
+        if key not in third_party_aging_data:
+            third_party_aging_data[key] = {
+                'name': entry.third_party.name if entry.third_party else 'N/A',
+                'total_outstanding': Decimal('0.00'),
+                'current': Decimal('0.00'),
+                'bucket_30': Decimal('0.00'),
+                'bucket_60': Decimal('0.00'),
+                'bucket_90': Decimal('0.00'),
+                'bucket_plus_90': Decimal('0.00'),
+                'currency': currency
+            }
+        
+        third_party_aging_data[key]['total_outstanding'] += remaining
+
+        if entry.due_date:
+            days_overdue = (today - entry.due_date).days
+            if days_overdue <= 0:  # No vencido o vence hoy
+                third_party_aging_data[key]['current'] += remaining
+            elif days_overdue <= 30:
+                third_party_aging_data[key]['bucket_30'] += remaining
+            elif days_overdue <= 60:
+                third_party_aging_data[key]['bucket_60'] += remaining
+            elif days_overdue <= 90:
+                third_party_aging_data[key]['bucket_90'] += remaining
+            else:  # Más de 90 días vencido
+                third_party_aging_data[key]['bucket_plus_90'] += remaining
+        else:
+            # Si no hay fecha de vencimiento, se considera al día
+            third_party_aging_data[key]['current'] += remaining
+
+    # Crea el libro de Excel
+    wb = Workbook()
+    ws = wb.active
+    ws.title = f"Cartera {type_filter.capitalize()} - Aging"
+
+    # Encabezados
+    headers = [
+        "Tercero",
+        "Moneda",
+        "Total Pendiente",
+        "Al Día",
+        "1-30 Días Vencido",
+        "31-60 Días Vencido",
+        "61-90 Días Vencido",
+        "+90 Días Vencido",
+    ]
+    ws.append(headers)
+
+    # Aplica estilo a los encabezados
+    header_font = Font(bold=True)
+    for col_idx in range(1, len(headers) + 1):
+        ws[f"{get_column_letter(col_idx)}1"].font = header_font
+        ws[f"{get_column_letter(col_idx)}1"].fill = PatternFill(start_color="D3D3D3", end_color="D3D3D3", fill_type="solid")
+        ws[f"{get_column_letter(col_idx)}1"].border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+
+    # Ordena los datos para una salida consistente del reporte
+    sorted_aging_data = sorted(third_party_aging_data.values(), key=lambda x: x['name'])
+
+    # Agrega filas de datos
+    for data in sorted_aging_data:
+        row_data = [
+            data['name'],
+            data['currency'],
+            data['total_outstanding'],
+            data['current'],
+            data['bucket_30'],
+            data['bucket_60'],
+            data['bucket_90'],
+            data['bucket_plus_90'],
+        ]
+        ws.append(row_data)
+
+    # Aplica formato de moneda y ajusta el ancho de las columnas
+    for col_idx in range(3, len(headers) + 1):  # Columnas para montos (C a H)
+        for row_idx in range(2, ws.max_row + 1):
+            ws[f"{get_column_letter(col_idx)}{row_idx}"].number_format = '#,##0.00'
+    
+    for col in ws.columns:
+        max_length = 0
+        column = col[0].column  # Obtiene el número de columna
+        for cell in col:
+            try:
+                if cell.value is not None:
+                    cell_length = len(str(cell.value))
+                    if cell_length > max_length:
+                        max_length = cell_length
+            except:
+                pass
+        adjusted_width = (max_length + 2) * 1.2
+        ws.column_dimensions[get_column_letter(column)].width = adjusted_width
+
+    excel_buffer = BytesIO()
+    wb.save(excel_buffer)
+    excel_buffer.seek(0)
+
+    filename = f"reporte_cartera_aging_{type_filter}_{today.isoformat()}.xlsx"
+    response = HttpResponse(
+        excel_buffer.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
+@login_required
+@tenant_required
 def payment_list(request):
     entries = FinancialEntry.objects.all().order_by("-entry_date")
 
@@ -2176,12 +3184,14 @@ def payment_list(request):
     remaining_to_pay = 0
     if selected_entry:
         try:
-            paid_sum_in_entry_currency = 0
+            paid_sum_in_entry_currency = Decimal("0")
             for p in Payment.objects.filter(financial_entry=selected_entry):
                 paid_sum_in_entry_currency += _convert_amount(
                     p.amount, p.currency, selected_entry.currency, p.payment_date
                 )
             remaining_to_pay = selected_entry.amount - paid_sum_in_entry_currency
+        except ValueError:
+            remaining_to_pay = selected_entry.amount
         except (ValueError, Exception):
             # Si hay error en conversión, mostrar el monto total sin restar
             remaining_to_pay = selected_entry.amount
@@ -2210,27 +3220,26 @@ def payment_create(request, entry_id):
     financial_entry = (
         FinancialEntry.objects.select_related("business").filter(pk=entry_id).first()
     )
-    if financial_entry is None:
+    if not financial_entry:
         messages.error(request, "Movimiento no encontrado.")
         return redirect("financial_entry_list")
 
-    # Si el movimiento está cancelado o ya está pagado, no permitir
-    total_paid_local = financial_entry.amount
+    # B4 FIX: Wrap remaining calculation to prevent 500 on missing exchange rates
+    try:
+        paid_sum_in_entry_currency = Decimal("0")
+        for p in Payment.objects.filter(financial_entry=financial_entry):
+            paid_sum_in_entry_currency += _convert_amount(
+                p.amount, p.currency, financial_entry.currency, p.payment_date
+            )
+        remaining = financial_entry.amount - paid_sum_in_entry_currency
+    except ValueError as e:
+        messages.error(request, f"Error de moneda: {str(e)}")
+        return redirect("payment_list")
 
     payments_qs = Payment.objects.filter(financial_entry=financial_entry)
-    paid_sum = payments_qs.aggregate(total=Sum("amount"))["total"] or 0
-
-    # Nota: con conversión real, paid_sum está en distintas monedas, por eso calculamos en moneda del movimiento usando conversion por fecha.
-    paid_sum_in_entry_currency = 0
-    for p in payments_qs:
-        paid_sum_in_entry_currency += _convert_amount(
-            p.amount, p.currency, financial_entry.currency, p.payment_date
-        )
-
-    remaining = financial_entry.amount - paid_sum_in_entry_currency
 
     # Si ya está pagado, permitimos registrar/crear el pago faltante (auto-generación),
-    # pero bloqueamos cuando esté cancelado o cuando el pendiente sea <= 0.
+    # pero bloqueamos cuando esté cancelado o cuando el pendiente sea <= 0. # B4 FIX: Removed dead variables # B2 FIX: Removed duplicated function
     if financial_entry.status == FinancialEntry.CANCELLED:
         messages.info(
             request, "Este movimiento ya está cancelado."
@@ -2269,7 +3278,7 @@ def payment_create(request, entry_id):
                     payment.created_by = request.user
                     payment.save()
 
-                    record_audit_event(
+                    record_audit_event( # B4 FIX: Removed dead variables # B2 FIX: Removed duplicated function
                         request,
                         AuditEvent.CREATE,
                         "payment",
@@ -2360,6 +3369,257 @@ def payment_create(request, entry_id):
     )
 
 
+@login_required
+@tenant_required
+@module_enabled_required("finances") # Or a new 'imports' module
+@tenant_group_required("Administrador de empresa", "Operador financiero")
+def generic_import_upload(request):
+    business = Business.objects.first()
+    if business is None:
+        messages.error(request, "Primero debes crear la empresa asociada a este tenant.")
+        return redirect("dashboard")
+
+    if request.method == "POST":
+        form = GenericImportUploadForm(request.POST, request.FILES)
+        if form.is_valid():
+            uploaded_file = form.cleaned_data['file']
+            target_model = form.cleaned_data['target_model']
+            delimiter = form.cleaned_data['delimiter']
+            has_header = form.cleaned_data['has_header']
+
+            batch = ImportBatch.objects.create(
+                business=business,
+                created_by=request.user,
+                file_name=uploaded_file.name,
+                target_model=target_model,
+                status='uploaded',
+            )
+
+            try:
+                # Determine file type and parse
+                if uploaded_file.name.endswith('.csv'):
+                    # Decode with utf-8, fallback to latin-1
+                    raw_data = uploaded_file.read()
+                    try:
+                        decoded_file = raw_data.decode('utf-8')
+                    except UnicodeDecodeError:
+                        decoded_file = raw_data.decode('latin-1')
+                    
+                    reader = csv.DictReader(io.StringIO(decoded_file), delimiter=delimiter)
+                    rows = list(reader)
+                elif uploaded_file.name.endswith(('.xls', '.xlsx')):
+                    import pandas as pd
+                    df = pd.read_excel(uploaded_file, header=0 if has_header else None)
+                    rows = df.to_dict('records')
+                else:
+                    raise ValueError("Tipo de archivo no soportado. Use CSV o Excel.")
+
+                # Store raw data for preview
+                records_to_create = []
+                for row_data in rows:
+                    records_to_create.append(ImportedRecord(
+                        batch=batch,
+                        row_data=row_data,
+                        status='pending'
+                    ))
+                ImportedRecord.objects.bulk_create(records_to_create)
+                batch.total_rows = len(records_to_create)
+                batch.save()
+
+                messages.success(request, f"Archivo '{uploaded_file.name}' subido y listo para previsualizar.")
+                return redirect('generic_import_preview', batch_id=batch.pk)
+
+            except Exception as e:
+                batch.status = 'failed'
+                batch.notes = str(e)
+                batch.save()
+                messages.error(request, f"Error al procesar el archivo: {str(e)}")
+                return redirect('generic_import_upload')
+    else:
+        form = GenericImportUploadForm()
+
+    return render(request, 'tenant/generic_import_upload.html', {
+        'form': form,
+        'page_title': 'Importar Datos (CSV/Excel)'
+    })
+
+@login_required
+@tenant_required
+@module_enabled_required("finances") # Or a new 'imports' module
+@tenant_group_required("Administrador de empresa", "Operador financiero")
+def generic_import_preview(request, batch_id):
+    batch = ImportBatch.objects.filter(pk=batch_id, created_by=request.user).first()
+    if not batch:
+        messages.error(request, "Lote de importación no encontrado o no autorizado.")
+        return redirect('generic_import_upload')
+
+    if batch.status not in ['uploaded', 'previewed']:
+        messages.warning(request, f"Este lote ya fue {batch.status}. No se puede previsualizar de nuevo.")
+        return redirect('generic_import_batch_detail', batch_id=batch.pk)
+
+    records = batch.records.all()
+    if not records.exists():
+        messages.warning(request, "No hay registros para previsualizar en este lote.")
+        return redirect('generic_import_upload')
+
+    # Get headers from the first record's data
+    headers = list(records.first().row_data.keys()) if records.first() else []
+
+    # Simple validation logic for preview (can be expanded)
+    for record in records:
+        errors = []
+        if batch.target_model == ImportBatch.FINANCIAL_ENTRY:
+            # Example: Check for 'amount' and 'entry_date'
+            try:
+                Decimal(str(record.row_data.get('amount', '0')).replace(',', '.'))
+            except InvalidOperation:
+                errors.append("Formato de 'amount' inválido")
+            if not record.row_data.get('entry_type') or record.row_data.get('entry_type') not in [c[0] for c in FinancialEntry.ENTRY_TYPE_CHOICES]:
+                errors.append("Tipo de entrada inválido")
+            try:
+                timezone.datetime.strptime(str(record.row_data.get('entry_date')), '%Y-%m-%d').date()
+            except (ValueError, TypeError):
+                errors.append("Formato de 'entry_date' inválido (esperado YYYY-MM-DD)")
+
+        elif batch.target_model == ImportBatch.THIRD_PARTY:
+            # Example: Check for 'name'
+            if not record.row_data.get('name'):
+                errors.append("Falta 'name'")
+        
+        if errors:
+            record.status = 'invalid'
+            record.validation_errors = errors
+        else:
+            record.status = 'valid'
+        record.save() # Save status and errors for preview
+
+    valid_records = records.filter(status='valid')
+    invalid_records = records.filter(status='invalid')
+
+    batch.processed_rows = valid_records.count()
+    batch.failed_rows = invalid_records.count()
+    batch.status = 'previewed'
+    batch.save()
+
+    return render(request, 'tenant/generic_import_preview.html', {
+        'batch': batch,
+        'headers': headers,
+        'valid_records': valid_records,
+        'invalid_records': invalid_records,
+        'page_title': f"Previsualizar Importación: {batch.file_name}"
+    })
+
+@login_required
+@tenant_required
+@module_enabled_required("finances") # Or a new 'imports' module
+@tenant_group_required("Administrador de empresa", "Operador financiero")
+@require_POST
+def generic_import_confirm(request, batch_id):
+    batch = ImportBatch.objects.filter(pk=batch_id, created_by=request.user).first()
+    if not batch:
+        messages.error(request, "Lote de importación no encontrado o no autorizado.")
+        return redirect('generic_import_upload')
+
+    if batch.status == 'confirmed':
+        messages.warning(request, "Este lote ya fue confirmado.")
+        return redirect('generic_import_batch_detail', batch_id=batch.pk)
+
+    records = batch.records.filter(status='valid') # Only process valid records
+
+    processed_count = 0
+    failed_count = 0
+    
+    with transaction.atomic():
+        for record in records:
+            try:
+                if batch.target_model == ImportBatch.FINANCIAL_ENTRY:
+                    fe_data = {
+                        'business': batch.business,
+                        'created_by': batch.created_by,
+                        'entry_type': record.row_data.get('entry_type', FinancialEntry.EXPENSE),
+                        'status': record.row_data.get('status', FinancialEntry.PENDING),
+                        'concept': record.row_data.get('concept', 'Importado'),
+                        'amount': Decimal(str(record.row_data.get('amount')).replace(',', '.')),
+                        'currency': record.row_data.get('currency', 'COP'),
+                        'entry_date': timezone.datetime.strptime(str(record.row_data.get('entry_date')), '%Y-%m-%d').date(),
+                        'due_date': timezone.datetime.strptime(str(record.row_data.get('due_date')), '%Y-%m-%d').date() if record.row_data.get('due_date') else None,
+                        'notes': record.row_data.get('notes', ''),
+                        'personal': record.row_data.get('personal', False),
+                    }
+                    if record.row_data.get('category'):
+                        fe_data['category'] = FinancialCategory.objects.filter(name=record.row_data['category'], business=batch.business).first()
+                    if record.row_data.get('project'):
+                        fe_data['project'] = Project.objects.filter(name=record.row_data['project'], business=batch.business).first()
+                    if record.row_data.get('third_party'):
+                        fe_data['third_party'] = ThirdParty.objects.filter(name=record.row_data['third_party']).first()
+
+                    obj = FinancialEntry.objects.create(**fe_data)
+
+                elif batch.target_model == ImportBatch.THIRD_PARTY:
+                    tp_data = {
+                        'name': record.row_data.get('name'),
+                        'identification': record.row_data.get('identification', ''),
+                        'email': record.row_data.get('email', ''),
+                        'phone': record.row_data.get('phone', ''),
+                        'address': record.row_data.get('address', ''),
+                        'third_party_type': record.row_data.get('third_party_type', ThirdParty.CUSTOMER),
+                        'is_active': record.row_data.get('is_active', True),
+                    }
+                    obj = ThirdParty.objects.create(**tp_data)
+                
+                record.status = 'processed'
+                record.processed_object_id = str(obj.pk)
+                record.processed_object_model = batch.target_model
+                record.save()
+                processed_count += 1
+
+            except Exception as e:
+                record.status = 'failed'
+                record.validation_errors = record.validation_errors + [f"Error al procesar: {str(e)}"]
+                record.save()
+                failed_count += 1
+        
+        batch.status = 'confirmed'
+        batch.processed_rows = processed_count
+        batch.failed_rows = failed_count
+        batch.save()
+
+    if failed_count > 0:
+        messages.warning(request, f"Importación completada con {processed_count} registros procesados y {failed_count} fallidos. Revise los detalles del lote.")
+    else:
+        messages.success(request, f"Importación completada exitosamente. {processed_count} registros creados.")
+    
+    return redirect('generic_import_batch_detail', batch_id=batch.pk)
+
+@login_required
+@tenant_required
+@module_enabled_required("finances") # Or a new 'imports' module
+def generic_import_batch_list(request):
+    batches = ImportBatch.objects.filter(business=Business.objects.first()).order_by('-created_at')
+    return render(request, 'tenant/generic_import_batch_list.html', {'batches': batches, 'page_title': 'Historial de Importaciones'})
+
+@login_required
+@tenant_required
+@module_enabled_required("finances") # Or a new 'imports' module
+def generic_import_batch_detail(request, batch_id):
+    batch = ImportBatch.objects.filter(pk=batch_id, business=Business.objects.first()).first()
+    if not batch:
+        messages.error(request, "Lote de importación no encontrado.")
+        return redirect('generic_import_batch_list')
+    
+    records = batch.records.all()
+    headers = list(records.first().row_data.keys()) if records.first() else []
+
+    return render(request, 'tenant/generic_import_batch_detail.html', {
+        'batch': batch,
+        'records': records,
+        'headers': headers,
+        'page_title': f"Detalle Lote {batch.pk}"
+    })
+
+
+@login_required
+@tenant_required
 def project_list(request):
     projects = Project.objects.select_related("third_party", "owner").all()
     status = request.GET.get("status")
@@ -2514,17 +3774,27 @@ def _normalize_text(value: str) -> str:
     return " ".join(str(value).strip().lower().split())
 
 
-def _parse_csv_date(value: str):
-    # MVP tolerante: intenta YYYY-MM-DD y DD/MM/YYYY
+def _parse_csv_date(value: str, *, statement_id: int | None = None, row_index: int | None = None):
+    """Intenta parsear fechas para import bancario.
+
+    - Soporta: YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY
+    - Nunca lanza excepción; retorna None si es inválida.
+    """
     value = (value or "").strip()
     if not value:
         return None
+
     for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
         try:
-            return date.fromisoformat(value) if fmt == "%Y-%m-%d" else date.strptime(value, fmt)
+            from datetime import datetime
+            return date.fromisoformat(value) if fmt == "%Y-%m-%d" else datetime.strptime(value, fmt).date()
         except Exception:
-            pass
+            continue
+
+    if statement_id is not None:
+        logger.warning(f"[bank-import] invalid date discarded statement_id={statement_id} row_index={row_index} value={value!r}") # B3 FIX: Use Django logger # B2 FIX: Removed duplicated function
     return None
+
 
 
 def _compute_payment_match_score(payment: Payment, fin_entry: FinancialEntry, bank_tx: BankTransaction):
@@ -2562,11 +3832,11 @@ def _compute_payment_match_score(payment: Payment, fin_entry: FinancialEntry, ba
     return score
 
 
-@login_required
+@login_required # B2 FIX: Removed duplicated function
 @tenant_required
 @module_enabled_required("finances")
 @tenant_group_required("Administrador de empresa", "Operador financiero")
-def bank_statement_import_csv(request):
+def bank_statement_import_csv(request): # B2 FIX: Removed duplicated function
     if request.method == "POST":
         form = BankStatementImportCSVForm(request.POST, request.FILES)
         if form.is_valid():
@@ -2593,11 +3863,7 @@ def bank_statement_import_csv(request):
                 text = raw.decode("utf-8")
             except Exception:
                 text = raw.decode("latin-1")
-            try:
-                uploaded.seek(0)
-            except Exception:
-                pass
-
+            uploaded.seek(0)
             f = io.StringIO(text)
             if has_header:
                 reader = csv_lib.DictReader(f, delimiter=delimiter)
@@ -2646,12 +3912,11 @@ def bank_statement_import_csv(request):
         {"form": form, "page_title": "Importar extracto CSV"},
     )
 
-
-@login_required
+@login_required # B2 FIX: Removed duplicated function
 @tenant_required
 @module_enabled_required("finances")
 @tenant_group_required("Administrador de empresa", "Operador financiero")
-def bank_transaction_suggestions(request, statement_id):
+def bank_transaction_suggestions(request, statement_id): # B2 FIX: Removed duplicated function
     statement = BankStatement.objects.filter(pk=statement_id).first()
     if not statement:
         messages.error(request, "Extracto no encontrado.")
@@ -2689,21 +3954,23 @@ def bank_transaction_suggestions(request, statement_id):
         best.sort(key=lambda x: x[0], reverse=True)
         if best:
             score, p, fin_entry = best[0]
-            rec, created = Reconciliation.objects.get_or_create(
-                bank_transaction=tx,
-                payment=p,
-                financial_entry=fin_entry,
-                status=Reconciliation.PROPOSED,
-                defaults={
-                    "match_confidence": int(score),
-                    "reconciliation_type": "manual",
-                    "matched_concept": tx.concept or tx.description,
-                },
-            )
-            if not created:
+            # B7 FIX: Update existing PROPOSED reconciliation instead of creating a new one
+            rec = Reconciliation.objects.filter(
+                bank_transaction=tx, status=Reconciliation.PROPOSED
+            ).first()
+
+            if rec:
+                rec.payment = p
+                rec.financial_entry = fin_entry
                 rec.match_confidence = int(score)
                 rec.matched_concept = tx.concept or tx.description
                 rec.save(update_fields=["match_confidence", "matched_concept"])
+            else:
+                rec = Reconciliation.objects.create(
+                    bank_transaction=tx, payment=p, financial_entry=fin_entry,
+                    status=Reconciliation.PROPOSED, match_confidence=int(score),
+                    reconciliation_type="manual", matched_concept=tx.concept or tx.description,
+                )
             reconciliations.append(rec)
 
     return render(
@@ -2716,13 +3983,12 @@ def bank_transaction_suggestions(request, statement_id):
         },
     )
 
-
-@login_required
+@login_required # B2 FIX: Removed duplicated function
 @tenant_required
 @module_enabled_required("finances")
 @tenant_group_required("Administrador de empresa", "Operador financiero")
 @require_POST
-def reconciliation_confirm(request, rec_id):
+def reconciliation_confirm(request, rec_id): # B2 FIX: Removed duplicated function
     rec = Reconciliation.objects.filter(pk=rec_id).first()
     if not rec:
         messages.error(request, "Conciliación no encontrada.")
@@ -2779,17 +4045,31 @@ def _normalize_text(value: str) -> str:
     return " ".join(str(value).strip().lower().split())
 
 
-def _parse_csv_date(value: str):
-    # MVP tolerante: intenta YYYY-MM-DD y DD/MM/YYYY
+def _parse_csv_date(value: str, *, statement_id: int | None = None, row_index: int | None = None):
+    """Intenta parsear fechas para import bancario.
+
+    - Soporta: YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY
+    - Nunca lanza excepción; retorna None si es inválida.
+    """
     value = (value or "").strip()
     if not value:
         return None
+
     for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
         try:
-            return date.fromisoformat(value) if fmt == "%Y-%m-%d" else date.strptime(value, fmt)
+            from datetime import datetime
+            return date.fromisoformat(value) if fmt == "%Y-%m-%d" else datetime.strptime(value, fmt).date()
         except Exception:
-            pass
+            continue
+
+    # logging mínimo (no usamos logger todavía): dejamos trazabilidad en consola
+    if statement_id is not None:
+        messages.warning(
+            None,
+            "Fecha inválida en import bancario; filas descartadas (statement_id=%s, row_index=%s)" % (statement_id, row_index),
+        )
     return None
+
 
 
 def _compute_payment_match_score(payment: Payment, fin_entry: FinancialEntry, bank_tx: BankTransaction):
@@ -2831,11 +4111,7 @@ def _compute_payment_match_score(payment: Payment, fin_entry: FinancialEntry, ba
     return score
 
 
-@login_required
-@tenant_required
-@module_enabled_required("finances")
-@tenant_group_required("Administrador de empresa", "Operador financiero")
-def bank_statement_import_csv(request):
+def bank_statement_import_csv(request): # B2 FIX: Removed duplicated function
     """
     MVP:
     - POST: sube CSV -> crea BankStatement y BankTransaction
@@ -2906,7 +4182,7 @@ def bank_statement_import_csv(request):
                         amount=amount_dec,
                         currency=currency,
                         external_id=external_id[:120],
-                        direction="",
+                        direction="in" if amount_dec > 0 else "out", # Populate direction field
                         status=BankTransaction.IMPORTED,
                     )
             else:
@@ -2927,12 +4203,7 @@ def bank_statement_import_csv(request):
         {"form": form, "page_title": "Importar extracto CSV"},
     )
 
-
-@login_required
-@tenant_required
-@module_enabled_required("finances")
-@tenant_group_required("Administrador de empresa", "Operador financiero")
-def bank_transaction_suggestions(request, statement_id):
+def bank_transaction_suggestions(request, statement_id): # B2 FIX: Removed duplicated function
     statement = BankStatement.objects.filter(pk=statement_id).first()
     if not statement:
         messages.error(request, "Extracto no encontrado.")
@@ -3004,13 +4275,7 @@ def bank_transaction_suggestions(request, statement_id):
         },
     )
 
-
-@login_required
-@tenant_required
-@module_enabled_required("finances")
-@tenant_group_required("Administrador de empresa", "Operador financiero")
-@require_POST
-def reconciliation_confirm(request, rec_id):
+def reconciliation_confirm(request, rec_id): # B2 FIX: Removed duplicated function
     rec = Reconciliation.objects.filter(pk=rec_id).first()
     if not rec:
         messages.error(request, "Conciliación no encontrada.")
@@ -3039,8 +4304,7 @@ def reconciliation_confirm(request, rec_id):
     if rec.status != Reconciliation.CONFIRMED:
         rec.status = Reconciliation.CONFIRMED
         rec.matched_at = date.today()
-        rec.updated_at = date.today()
-        rec.save(update_fields=["status", "matched_at", "updated_at"])
+        rec.save(update_fields=["status", "matched_at"]) # Removed updated_at as it's auto_now
 
     # MVP: crear Payment si falta (según decisión previa)
     if not rec.payment and rec.financial_entry:
@@ -3128,3 +4392,431 @@ def bank_account_create(request):
             "page_title": "Nueva cuenta bancaria",
         },
     )
+
+@login_required
+@tenant_required
+@tenant_group_required("Administrador de empresa", "Operador financiero")
+@module_enabled_required("finances")
+def bank_account_edit(request, account_id):
+    bank_account = BankAccount.objects.filter(pk=account_id).first()
+    if bank_account is None:
+        messages.error(request, "Cuenta bancaria no encontrada.")
+        return redirect("bank_account_list")
+    
+    form = BankAccountForm(request.POST or None, instance=bank_account)
+    if request.method == "POST" and form.is_valid():
+        updated_bank_account = form.save()
+
+        record_audit_event(
+            request,
+            AuditEvent.UPDATE,
+            "bank_account",
+            f"Cuenta bancaria actualizada: {updated_bank_account.name}",
+            entity_id=updated_bank_account.pk,
+            metadata={
+                "bank_account_id": str(updated_bank_account.pk),
+                "name": updated_bank_account.name,
+                "base_currency": updated_bank_account.base_currency,
+                "bank_name": updated_bank_account.bank_name,
+                "is_active": updated_bank_account.is_active,
+            },
+        )
+        messages.success(request, "Cuenta bancaria actualizada correctamente.")
+        return redirect("bank_account_list")
+
+    return render(
+        request,
+        "tenant/bank_account_form.html",
+        {
+            "form": form,
+            "page_title": "Editar cuenta bancaria",
+            "bank_account": bank_account,
+        },
+    )
+
+@login_required
+@tenant_required
+@module_enabled_required("taxes")
+@tenant_group_required("Administrador de empresa")
+def tax_rule_list(request):
+    tax_rules = TaxRule.objects.filter(business=Business.objects.first()).order_by("name")
+    return render(
+        request, "tenant/tax_rule_list.html", {"tax_rules": tax_rules}
+    )
+
+
+@login_required
+@tenant_required
+@module_enabled_required("taxes")
+@tenant_group_required("Administrador de empresa")
+def tax_rule_create(request):
+    business = Business.objects.first()
+    if business is None:
+        messages.error(request, "Primero debes crear la empresa asociada a este tenant.")
+        return redirect("dashboard")
+
+    form = TaxRuleForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        tax_rule = form.save(commit=False)
+        tax_rule.business = business
+        tax_rule.save()
+        record_audit_event(
+            request,
+            AuditEvent.CREATE,
+            "tax_rule",
+            f"Regla tributaria creada: {tax_rule.name}",
+            entity_id=tax_rule.pk,
+        )
+        messages.success(request, "Regla tributaria creada correctamente.")
+        return redirect("tax_rule_list")
+    return render(
+        request,
+        "tenant/tax_rule_form.html",
+        {"form": form, "page_title": "Nueva Regla Tributaria", "business": business},
+    )
+
+
+@login_required
+@tenant_required
+@module_enabled_required("taxes")
+@tenant_group_required("Administrador de empresa")
+def tax_rule_edit(request, tax_rule_id):
+    tax_rule = TaxRule.objects.filter(pk=tax_rule_id, business=Business.objects.first()).first()
+    if not tax_rule:
+        messages.error(request, "Regla tributaria no encontrada.")
+        return redirect("tax_rule_list")
+
+    form = TaxRuleForm(request.POST or None, instance=tax_rule)
+    if request.method == "POST" and form.is_valid():
+        tax_rule = form.save()
+        record_audit_event(
+            request,
+            AuditEvent.UPDATE,
+            "tax_rule",
+            f"Regla tributaria actualizada: {tax_rule.name}",
+            entity_id=tax_rule.pk,
+        )
+        messages.success(request, "Regla tributaria actualizada correctamente.")
+        return redirect("tax_rule_list")
+    return render(
+        request,
+        "tenant/tax_rule_form.html",
+        {"form": form, "page_title": "Editar Regla Tributaria", "tax_rule": tax_rule},
+    )
+
+
+@login_required
+@tenant_required
+@module_enabled_required("invoices") # Quotes are part of invoices module
+def quote_pdf(request, quote_id):
+    """Generate PDF for a quote"""
+    try:
+        from reportlab.lib.pagesizes import letter, A4
+        from reportlab.lib import colors
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import inch
+        from reportlab.platypus import (
+            SimpleDocTemplate,
+            Table,
+            TableStyle,
+            Paragraph,
+            Spacer,
+            PageBreak,
+        )
+        from datetime import datetime
+    except ImportError:
+        messages.error(
+            request, "ReportLab no está instalado. Instala: pip install reportlab"
+        )
+        return redirect("quote_detail", quote_id=quote_id)
+
+    quote = (
+        Quote.objects.select_related("business", "third_party")
+        .filter(pk=quote_id)
+        .first()
+    )
+    if quote is None:
+        return redirect("quote_list")
+
+    # Create PDF in memory
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4, topMargin=0.5 * inch, bottomMargin=0.5 * inch
+    )
+    elements = []
+    styles = getSampleStyleSheet()
+
+    # Title and quote info
+    title_style = ParagraphStyle(
+        "CustomTitle",
+        parent=styles["Heading1"],
+        fontSize=24,
+        textColor=colors.HexColor("#1f3a93"),
+        spaceAfter=30,
+    )
+
+    elements.append(Paragraph(f"COTIZACIÓN {quote.quote_number}", title_style))
+    elements.append(Spacer(1, 0.2 * inch))
+
+    # Business and quote details
+    info_data = [
+        ["EMPRESA", quote.business.business_name],
+        ["CLIENTE", quote.third_party.name if quote.third_party else "N/A"],
+        ["FECHA EMISIÓN", quote.issue_date.strftime("%d/%m/%Y")],
+        [
+            "FECHA VENCIMIENTO",
+            quote.due_date.strftime("%d/%m/%Y") if quote.due_date else "N/A",
+        ],
+        ["ESTADO", quote.get_status_display()],
+    ]
+
+    info_table = Table(info_data, colWidths=[2 * inch, 4 * inch])
+    info_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f0f0f0")),
+                ("TEXTCOLOR", (0, 0), (-1, -1), colors.black),
+                ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 10),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
+                ("GRID", (0, 0), (-1, -1), 1, colors.black),
+            ]
+        )
+    )
+
+    elements.append(info_table)
+    elements.append(Spacer(1, 0.3 * inch))
+
+    # Items table
+    items_data = [["Descripción", "Cantidad", "Precio Unitario", "Subtotal"]]
+    for item in quote.items.all():
+        items_data.append(
+            [
+                item.description,
+                str(item.quantity),
+                f"${item.unit_price:.2f}",
+                f"${item.subtotal:.2f}",
+            ]
+        )
+
+    items_table = Table(
+        items_data, colWidths=[3 * inch, 1 * inch, 1.5 * inch, 1.5 * inch]
+    )
+    items_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f3a93")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
+                ("ALIGN", (0, 0), (0, -1), "LEFT"),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
+                ("GRID", (0, 0), (-1, -1), 1, colors.black),
+                (
+                    "ROWBACKGROUNDS",
+                    (0, 1),
+                    (-1, -1),
+                    [colors.white, colors.HexColor("#f9f9f9")],
+                ),
+            ]
+        )
+    )
+
+    elements.append(items_table)
+    elements.append(Spacer(1, 0.2 * inch))
+
+    # Totals
+    totals_data = [
+        ["SUBTOTAL", f"${quote.subtotal:.2f} {quote.currency}"],
+    ]
+    for rule in quote.tax_rules.all():
+        if rule.rule_type == TaxRule.IVA:
+            totals_data.append([f"{rule.name} ({rule.percentage}%)", f"${quote.tax_amount:.2f}"])
+        elif rule.rule_type in [TaxRule.RETENCION_FUENTE, TaxRule.RETENCION_ICA]:
+            totals_data.append([f"{rule.name} ({rule.percentage}%)", f"-${quote.retention_amount:.2f}"])
+    totals_data.append(["TOTAL", f"${quote.total:.2f} {quote.currency}"])
+
+    totals_table = Table(totals_data, colWidths=[3.5 * inch, 2.5 * inch])
+    totals_table.setStyle(
+        TableStyle(
+            [
+                ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
+                ("FONTNAME", (0, len(totals_data)-1), (-1, len(totals_data)-1), "Helvetica-Bold"),
+                ("FONTSIZE", (0, len(totals_data)-1), (-1, len(totals_data)-1), 12),
+                ("BACKGROUND", (0, len(totals_data)-1), (-1, len(totals_data)-1), colors.HexColor("#1f3a93")),
+                ("TEXTCOLOR", (0, len(totals_data)-1), (-1, len(totals_data)-1), colors.whitesmoke),
+                ("GRID", (0, 0), (-1, -1), 1, colors.black),
+            ]
+        )
+    )
+
+    elements.append(totals_table)
+
+    # Build PDF
+    doc.build(elements)
+    buffer.seek(0)
+
+    response = HttpResponse(buffer.getvalue(), content_type="application/pdf")
+    response["Content-Disposition"] = (
+        f'attachment; filename="quote_{quote.quote_number}.pdf"'
+    )
+    return response
+
+
+@login_required
+@tenant_required
+@module_enabled_required("credit_notes")
+def credit_note_pdf(request, credit_note_id):
+    """Generate PDF for a credit note"""
+    try:
+        from reportlab.lib.pagesizes import letter, A4
+        from reportlab.lib import colors
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import inch
+        from reportlab.platypus import (
+            SimpleDocTemplate,
+            Table,
+            TableStyle,
+            Paragraph,
+            Spacer,
+            PageBreak,
+        )
+        from datetime import datetime
+    except ImportError:
+        messages.error(
+            request, "ReportLab no está instalado. Instala: pip install reportlab"
+        )
+        return redirect("credit_note_detail", credit_note_id=credit_note_id)
+
+    credit_note = (
+        CreditNote.objects.select_related("business", "third_party", "invoice")
+        .filter(pk=credit_note_id)
+        .first()
+    )
+    if credit_note is None:
+        return redirect("credit_note_list")
+
+    # Create PDF in memory
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4, topMargin=0.5 * inch, bottomMargin=0.5 * inch
+    )
+    elements = []
+    styles = getSampleStyleSheet()
+
+    # Title and credit note info
+    title_style = ParagraphStyle(
+        "CustomTitle",
+        parent=styles["Heading1"],
+        fontSize=24,
+        textColor=colors.HexColor("#1f3a93"),
+        spaceAfter=30,
+    )
+
+    elements.append(Paragraph(f"NOTA DE CRÉDITO {credit_note.credit_note_number}", title_style))
+    elements.append(Spacer(1, 0.2 * inch))
+
+    # Business and credit note details
+    info_data = [
+        ["EMPRESA", credit_note.business.business_name],
+        ["CLIENTE", credit_note.third_party.name if credit_note.third_party else "N/A"],
+        ["FACTURA ASOCIADA", credit_note.invoice.invoice_number if credit_note.invoice else "N/A"],
+        ["FECHA EMISIÓN", credit_note.issue_date.strftime("%d/%m/%Y")],
+        ["ESTADO", credit_note.get_status_display()],
+    ]
+
+    info_table = Table(info_data, colWidths=[2 * inch, 4 * inch])
+    info_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f0f0f0")),
+                ("TEXTCOLOR", (0, 0), (-1, -1), colors.black),
+                ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 10),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
+                ("GRID", (0, 0), (-1, -1), 1, colors.black),
+            ]
+        )
+    )
+
+    elements.append(info_table)
+    elements.append(Spacer(1, 0.3 * inch))
+
+    # Items table
+    items_data = [["Descripción", "Cantidad", "Precio Unitario", "Subtotal"]]
+    for item in credit_note.items.all():
+        items_data.append(
+            [
+                item.description,
+                str(item.quantity),
+                f"${item.unit_price:.2f}",
+                f"${item.subtotal:.2f}",
+            ]
+        )
+
+    items_table = Table(
+        items_data, colWidths=[3 * inch, 1 * inch, 1.5 * inch, 1.5 * inch]
+    )
+    items_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f3a93")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
+                ("ALIGN", (0, 0), (0, -1), "LEFT"),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
+                ("GRID", (0, 0), (-1, -1), 1, colors.black),
+                (
+                    "ROWBACKGROUNDS",
+                    (0, 1),
+                    (-1, -1),
+                    [colors.white, colors.HexColor("#f9f9f9")],
+                ),
+            ]
+        )
+    )
+
+    elements.append(items_table)
+    elements.append(Spacer(1, 0.2 * inch))
+
+    # Totals
+    totals_data = [
+        ["SUBTOTAL", f"${credit_note.subtotal:.2f} {credit_note.currency}"],
+    ]
+    for rule in credit_note.tax_rules.all():
+        if rule.rule_type == TaxRule.IVA:
+            totals_data.append([f"{rule.name} ({rule.percentage}%)", f"${credit_note.tax_amount:.2f}"])
+        elif rule.rule_type in [TaxRule.RETENCION_FUENTE, TaxRule.RETENCION_ICA]:
+            totals_data.append([f"{rule.name} ({rule.percentage}%)", f"-${credit_note.retention_amount:.2f}"])
+    totals_data.append(["TOTAL", f"${credit_note.total:.2f} {credit_note.currency}"])
+
+    totals_table = Table(totals_data, colWidths=[3.5 * inch, 2.5 * inch])
+    totals_table.setStyle(
+        TableStyle(
+            [
+                ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
+                ("FONTNAME", (0, len(totals_data)-1), (-1, len(totals_data)-1), "Helvetica-Bold"),
+                ("FONTSIZE", (0, len(totals_data)-1), (-1, len(totals_data)-1), 12),
+                ("BACKGROUND", (0, len(totals_data)-1), (-1, len(totals_data)-1), colors.HexColor("#1f3a93")),
+                ("TEXTCOLOR", (0, len(totals_data)-1), (-1, len(totals_data)-1), colors.whitesmoke),
+                ("GRID", (0, 0), (-1, -1), 1, colors.black),
+            ]
+        )
+    )
+
+    elements.append(totals_table)
+
+    # Build PDF
+    doc.build(elements)
+    buffer.seek(0)
+
+    response = HttpResponse(buffer.getvalue(), content_type="application/pdf")
+    response["Content-Disposition"] = (
+        f'attachment; filename="credit_note_{credit_note.credit_note_number}.pdf"'
+    )
+    return response

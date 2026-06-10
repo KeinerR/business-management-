@@ -1,7 +1,12 @@
 FROM python:3.13-slim-trixie
 
 WORKDIR /app
-
+# Instalar dependencias del sistema necesarias para la compilación de paquetes Python
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    python3-dev \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 

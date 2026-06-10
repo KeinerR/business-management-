@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-4">
+    <div class="card shadow">
+        <div class="card-header d-flex justify-content-between">
+            <h4>Nota de Crédito: {{ credit_note.credit_note_number }}</h4>
+            <div>
+                <a href="{% url 'credit_note_list' %}" class="btn btn-secondary btn-sm">Volver</a>
+                {% if credit_note.status != 'cancelled' %}
+                <a href="{% url 'credit_note_edit' credit_note.id %}" class="btn btn-warning btn-sm">Editar</a>
+                <form action="{% url 'credit_note_cancel' credit_note.id %}" method="POST" class="d-inline" onsubmit="return confirm('¿Anular esta nota de crédito?');">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-danger btn-sm">Anular</button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+        <div class="card-body">
+            <div class="row mb-4">
+                <div class="col-md-6">
+                    <p><strong>Tercero:</strong> {{ credit_note.third_party.name }}</p>
+                    <p><strong>Factura Asociada:</strong> {{ credit_note.invoice.invoice_number|default:"N/A" }}</p>
+                </div>
+                <div class="col-md-6 text-end">
+                    <p><strong>Fecha:</strong> {{ credit_note.issue_date }}</p>
+                    <p><strong>Estado:</strong> {{ credit_note.get_status_display }}</p>
+                </div>
+            </div>
+
+            <table class="table table-bordered">
+                <thead class="table-light">
+                    <tr>
+                        <th>Descripción</th>
+                        <th class="text-end">Cantidad</th>
+                        <th class="text-end">Precio</th>
+                        <th class="text-end">Subtotal</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in credit_note.items.all %}
+                    <tr>
+                        <td>{{ item.description }}</td>
+                        <td class="text-end">{{ item.quantity }}</td>
+                        <td class="text-end">{{ item.unit_price }}</td>
+                        <td class="text-end">{{ item.subtotal }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <th colspan="3" class="text-end">Subtotal:</th>
+                        <td class="text-end">{{ credit_note.subtotal }}</td>
+                    </tr>
+                    <tr>
+                        <th colspan="3" class="text-end">IVA ({{ credit_note.tax_percentage }}%):</th>
+                        <td class="text-end">{{ credit_note.tax_amount }}</td>
+                    </tr>
+                    <tr class="table-primary">
+                        <th colspan="3" class="text-end">Total:</th>
+                        <td class="text-end"><strong>{{ credit_note.total }} {{ credit_note.currency }}</strong></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

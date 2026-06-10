@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>{{ page_title }}</h2>
+        <a href="{% url 'generic_import_batch_list' %}" class="btn btn-secondary">Volver al Historial</a>
+    </div>
+
+    <div class="card shadow-sm mb-4">
+        <div class="card-header">
+            <h5>Información del Lote #{{ batch.id }}</h5>
+        </div>
+        <div class="card-body">
+            <p><strong>Archivo:</strong> {{ batch.file_name }}</p>
+            <p><strong>Modelo de Destino:</strong> {{ batch.get_target_model_display }}</p>
+            <p><strong>Fecha de Creación:</strong> {{ batch.created_at|date:"d/m/Y H:i" }}</p>
+            <p><strong>Estado:</strong> 
+                <span class="badge {% if batch.status == 'confirmed' %}bg-success{% elif batch.status == 'failed' %}bg-danger{% elif batch.status == 'uploaded' or batch.status == 'previewed' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
+                    {{ batch.status }}
+                </span>
+            </p>
+            <p><strong>Total de Filas:</strong> {{ batch.total_rows }}</p>
+            <p><strong>Registros Procesados:</strong> {{ batch.processed_rows }}</p>
+            <p><strong>Registros Fallidos:</strong> {{ batch.failed_rows }}</p>
+            {% if batch.notes %}<p><strong>Notas:</strong> {{ batch.notes }}</p>{% endif %}
+        </div>
+    </div>
+
+    {% if records %}
+    <div class="card shadow-sm">
+        <div class="card-header">
+            <h5>Registros del Lote</h5>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-bordered table-sm">
+                    <thead>
+                        <tr>
+                            <th>Fila</th>
+                            {% for header in headers %}
+                                <th>{{ header }}</th>
+                            {% endfor %}
+                            <th>Estado</th>
+                            <th>Errores</th>
+                            <th>ID Objeto Procesado</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for record in records %}
+                        <tr>
+                            <td>{{ forloop.counter }}</td>
+                            {% for header in headers %}
+                                <td>{{ record.row_data|get_item:header|default_if_none:"" }}</td>
+                            {% endfor %}
+                            <td>
+                                <span class="badge {% if record.status == 'processed' %}bg-success{% elif record.status == 'invalid' or record.status == 'failed' %}bg-danger{% else %}bg-secondary{% endif %}">
+                                    {{ record.status }}
+                                </span>
+                            </td>
+                            <td>
+                                {% if record.validation_errors %}
+                                    {% for error in record.validation_errors %}
+                                        <span class="badge bg-warning text-dark">{{ error }}</span><br>
+                                    {% endfor %}
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if record.processed_object_id %}
+                                    {{ record.processed_object_model }}: {{ record.processed_object_id }}
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% else %}
+        <p>No hay registros asociados a este lote de importación.</p>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% comment %} Custom filter to access dictionary items in template {% endcomment %}
+{% load custom_filters %}

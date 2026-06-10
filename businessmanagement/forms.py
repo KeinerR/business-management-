@@ -1,6 +1,6 @@
 from django import forms
 from django.conf import settings
-from django.contrib.auth import get_user_model
+from django.contrib.auth import get_user_model # Import inlineformset_factory
 from django.contrib.auth.models import Group, Permission
 from django.core.exceptions import ValidationError
 from django.forms import ModelChoiceField
@@ -15,26 +15,25 @@ from tenantdata.models import (
     Payment,
     Project,
     ThirdParty,
+    CreditNote,
+    CreditNoteItem,
+    TaxRule,
+    Budget,
+    BudgetLine,
+    ImportBatch,
+    ImportedRecord,
     BankAccount,
     Quote,
+    # Nota: DebitNote debe existir en tenantdata.models, pero si el import falla
+    # (por dependencia circular en runtime) evitamos que el NameError derribe el worker.
+    DebitNote,
+    DebitNoteItem,
 )
+from django.forms import inlineformset_factory
+
 
 from .models import Domain, Tenant
-
-
-AVAILABLE_MODULES = (
-    ("finances", "Finanzas (Movimientos)"),
-    ("projects", "Proyectos"),
-    ("third_parties", "Terceros (CRM)"),
-    ("categories", "Categorías Financieras"),
-    ("invoices", "Facturas"),
-    ("employees", "Empleados"),
-    ("currency_rates", "Tasas de Cambio"),
-)
-
-MODULES_INDIVIDUAL = ["finances", "projects", "third_parties", "categories"]
-MODULES_BUSINESS = ["invoices", "employees", "currency_rates"]
-
+from .modules import AVAILABLE_MODULES, MODULES_INDIVIDUAL, MODULES_BUSINESS
 
 class PlatformTenantCreateForm(forms.ModelForm):
     domain = forms.CharField(
@@ -325,6 +324,100 @@ class ThirdPartyForm(forms.ModelForm):
                 )
 
 
+class BudgetForm(forms.ModelForm):
+    class Meta:
+        model = Budget
+        fields = ("name", "description", "period_start_date", "period_end_date", "status", "currency")
+        labels = {
+            "name": "Nombre del Presupuesto",
+            "description": "Descripción",
+            "period_start_date": "Fecha de Inicio",
+            "period_end_date": "Fecha de Fin",
+            "status": "Estado",
+            "currency": "Moneda",
+        }
+        widgets = {
+            "period_start_date": forms.DateInput(attrs={"type": "date"}),
+            "period_end_date": forms.DateInput(attrs={"type": "date"}),
+            "description": forms.Textarea(attrs={"rows": 3}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for field in self.fields.values():
+            field.widget.attrs.update({"class": "form-control", "autocomplete": "off"})
+
+
+class BudgetLineForm(forms.ModelForm):
+    class Meta:
+        model = BudgetLine
+        fields = ("concept", "category", "project", "budgeted_amount", "currency")
+        labels = {
+            "concept": "Concepto",
+            "category": "Categoría",
+            "project": "Proyecto",
+            "budgeted_amount": "Monto Presupuestado",
+            "currency": "Moneda",
+        }
+        widgets = {
+            "budgeted_amount": TwoDecimalNumberInput(attrs={"step": "0.01"}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["category"].queryset = FinancialCategory.objects.filter(is_active=True).order_by("name")
+        self.fields["project"].queryset = Project.objects.all().order_by("name")
+        self.fields["category"].required = False
+        self.fields["project"].required = False
+        for field in self.fields.values():
+            field.widget.attrs.update({"class": "form-control", "autocomplete": "off"})
+
+
+BudgetLineFormSet = inlineformset_factory(
+    Budget,
+    BudgetLine,
+    form=BudgetLineForm,
+    extra=1, # Initial empty forms
+    can_delete=True,
+)
+
+
+class GenericImportUploadForm(forms.Form):
+    target_model = forms.ChoiceField(
+        choices=ImportBatch.TARGET_MODEL_CHOICES,
+        label="Modelo a importar",
+        help_text="Seleccione el tipo de datos que desea importar."
+    )
+    file = forms.FileField(label="Archivo CSV o Excel", help_text="Suba su archivo de datos.")
+    delimiter = forms.ChoiceField(
+        choices=(
+            (',', 'Coma (,)'),
+            (';', 'Punto y coma (;)'),
+            ('\t', 'Tabulación'),
+        ),
+        label="Separador de CSV (si es CSV)",
+        initial=',',
+        required=False,
+        help_text="Solo aplica para archivos CSV."
+    )
+    has_header = forms.BooleanField(
+        label="El archivo tiene encabezado",
+        initial=True,
+        required=False,
+        help_text="Marque si la primera fila de su archivo contiene los nombres de las columnas."
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for field_name, field in self.fields.items():
+            if field_name == 'has_header':
+                field.widget.attrs.update({"class": "form-check-input"})
+            else:
+                field.widget.attrs.update({"class": "form-control"})
+
+
+
+
 class FinancialEntryForm(forms.ModelForm):
     class Meta:
         model = FinancialEntry
@@ -595,6 +688,15 @@ class QuoteForm(forms.ModelForm):
         for field_name, field in self.fields.items():
             field.widget.attrs.update({"class": "form-control"})
 
+        self.fields["tax_rules"] = forms.ModelMultipleChoiceField(
+            queryset=TaxRule.objects.filter(business=Business.objects.first(), is_active=True).order_by("name"),
+            required=False,
+            widget=forms.CheckboxSelectMultiple,
+            label="Reglas Tributarias",
+        )
+        if self.instance and self.instance.pk:
+            self.fields["tax_rules"].initial = self.instance.tax_rules.all()
+
 
 class InvoiceItemForm(forms.ModelForm):
     class Meta:
@@ -619,6 +721,154 @@ class InvoiceItemForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         for field in self.fields.values():
             field.widget.attrs.setdefault("class", "form-control")
+
+
+class TaxRuleForm(forms.ModelForm):
+    class Meta:
+        model = TaxRule
+        fields = ("name", "rule_type", "percentage", "is_active")
+        labels = {
+            "name": "Nombre de la regla",
+            "rule_type": "Tipo de regla",
+            "percentage": "Porcentaje (%)",
+            "is_active": "Activa",
+        }
+        widgets = {
+            "percentage": forms.NumberInput(attrs={"step": "0.01"}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for field_name, field in self.fields.items():
+            if field_name == "is_active":
+                field.widget.attrs.update({"class": "form-check-input"})
+            else:
+                field.widget.attrs.update(
+                    {"class": "form-control", "autocomplete": "off"}
+                )
+
+
+class CreditNoteForm(forms.ModelForm):
+    class Meta:
+        model = CreditNote
+        fields = (
+            "invoice",
+            "third_party",
+            "status",
+            "issue_date",
+            "currency",
+            "description",
+            "notes",
+        )
+        labels = {
+            "invoice": "Factura asociada",
+            "third_party": "Cliente/Proveedor",
+            "status": "Estado",
+            "issue_date": "Fecha de emisión",
+            "currency": "Moneda",
+            "description": "Descripción",
+            "notes": "Notas",
+        }
+        widgets = {
+            "issue_date": forms.DateInput(attrs={"type": "date"}),
+            "description": forms.Textarea(attrs={"rows": 3}),
+            "notes": forms.Textarea(attrs={"rows": 3}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        self.tenant_type = kwargs.pop("tenant_type", Tenant.TYPE_BUSINESS)
+        super().__init__(*args, **kwargs)
+        self.fields["third_party"].queryset = ThirdParty.objects.filter(
+            is_active=True
+        ).order_by("name")
+        self.fields["third_party"].required = False
+        self.fields["invoice"].queryset = Invoice.objects.all().order_by("-issue_date")
+        self.fields["invoice"].required = False
+
+        self.fields["tax_rules"] = forms.ModelMultipleChoiceField(
+            queryset=TaxRule.objects.filter(business=Business.objects.first(), is_active=True).order_by("name"),
+            required=False,
+            widget=forms.CheckboxSelectMultiple,
+            label="Reglas Tributarias",
+        )
+        if self.instance and self.instance.pk:
+            self.fields["tax_rules"].initial = self.instance.tax_rules.all()
+
+        for field_name, field in self.fields.items():
+            field.widget.attrs.update({"class": "form-control"})
+
+
+class DebitNoteForm(forms.ModelForm):
+    class Meta:
+        model = DebitNote
+        fields = (
+
+            "invoice",
+            "third_party",
+            "status",
+            "issue_date",
+            "currency",
+            "description",
+            "notes",
+        )
+        labels = {
+            "invoice": "Factura asociada",
+            "third_party": "Cliente/Proveedor",
+            "status": "Estado",
+            "issue_date": "Fecha de emisión",
+            "currency": "Moneda",
+            "description": "Descripción",
+            "notes": "Notas",
+        }
+        widgets = {
+            "issue_date": forms.DateInput(attrs={"type": "date"}),
+            "description": forms.Textarea(attrs={"rows": 3}),
+            "notes": forms.Textarea(attrs={"rows": 3}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        self.tenant_type = kwargs.pop("tenant_type", Tenant.TYPE_BUSINESS)
+        super().__init__(*args, **kwargs)
+        self.fields["third_party"].queryset = ThirdParty.objects.filter(
+            is_active=True
+        ).order_by("name")
+        self.fields["third_party"].required = False
+        self.fields["invoice"].queryset = Invoice.objects.all().order_by("-issue_date")
+        self.fields["invoice"].required = False
+
+        self.fields["tax_rules"] = forms.ModelMultipleChoiceField(
+            queryset=TaxRule.objects.filter(business=Business.objects.first(), is_active=True).order_by("name"),
+            required=False,
+            widget=forms.CheckboxSelectMultiple,
+            label="Reglas Tributarias",
+        )
+        if self.instance and self.instance.pk:
+            self.fields["tax_rules"].initial = self.instance.tax_rules.all()
+
+        for field_name, field in self.fields.items():
+            field.widget.attrs.update({"class": "form-control"})
+
+
+class CreditNoteItemForm(forms.ModelForm):
+    class Meta:
+        model = CreditNoteItem
+        fields = ("description", "quantity", "unit_price")
+        widgets = {
+            "description": forms.TextInput(attrs={"class": "form-control"}),
+            "quantity": forms.NumberInput(attrs={"class": "form-control", "step": "0.01"}),
+            "unit_price": forms.NumberInput(attrs={"class": "form-control", "step": "0.01"}),
+        }
+
+
+class DebitNoteItemForm(forms.ModelForm):
+    class Meta:
+        model = DebitNoteItem
+        fields = ("description", "quantity", "unit_price")
+        widgets = {
+            "description": forms.TextInput(attrs={"class": "form-control"}),
+            "quantity": forms.NumberInput(attrs={"class": "form-control", "step": "0.01"}),
+            "unit_price": forms.NumberInput(attrs={"class": "form-control", "step": "0.01"}),
+        }
 
 
 class PaymentForm(forms.ModelForm):

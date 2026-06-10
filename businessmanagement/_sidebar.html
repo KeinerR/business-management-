@@ -1,0 +1,59 @@
+<div class="flex-shrink-0 p-3 bg-light border-end" style="width: 280px; min-height: 100vh;">
+    <a href="{% url 'dashboard' %}" class="d-flex align-items-center pb-3 mb-3 link-dark text-decoration-none border-bottom">
+        <i class="bi bi-cpu-fill fs-4 me-2 text-primary"></i>
+        <span class="fs-5 fw-semibold">SystemManager</span>
+    </a>
+    <ul class="list-unstyled ps-0">
+        <li class="mb-1">
+            <a href="{% url 'dashboard' %}" class="btn d-inline-flex align-items-center rounded border-0 w-100 {% if request.resolver_match.url_name == 'dashboard' %}fw-bold text-primary{% endif %}">
+                <i class="bi bi-speedometer2 me-2"></i> Dashboard
+            </a>
+        </li>
+        
+        {% for group_name, modules in grouped_modules.items %}
+        <li class="mb-1">
+            <button class="btn btn-toggle d-inline-flex align-items-center rounded border-0 collapsed w-100 text-start" 
+                    data-bs-toggle="collapse" 
+                    data-bs-target="#{{ group_name|slugify }}-collapse" 
+                    aria-expanded="false">
+                <i class="bi bi-chevron-right me-2 transition-icon small"></i>
+                {{ group_name }}
+            </button>
+            <div class="collapse show" id="{{ group_name|slugify }}-collapse">
+                <ul class="btn-toggle-nav list-unstyled fw-normal pb-1 small ps-4">
+                    {% for mod in modules %}
+                    <li>
+                        <a href="{% url mod.url_name %}" class="link-dark d-inline-flex text-decoration-none rounded p-1 w-100 {% if request.resolver_match.url_name == mod.url_name %}fw-bold text-primary bg-white shadow-sm{% endif %}">
+                            <i class="bi {{ mod.icon }} me-2"></i> {{ mod.label }}
+                        </a>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </li>
+        {% endfor %}
+
+        {% if user.is_staff or user.is_superuser %}
+        <li class="border-top my-3"></li>
+        <li class="mb-1">
+            <button class="btn btn-toggle d-inline-flex align-items-center rounded border-0 collapsed w-100 text-start" 
+                    data-bs-toggle="collapse" 
+                    data-bs-target="#platform-collapse" 
+                    aria-expanded="false">
+                <i class="bi bi-shield-lock me-2"></i> Admin Plataforma
+            </button>
+            <div class="collapse" id="platform-collapse">
+                <ul class="btn-toggle-nav list-unstyled fw-normal pb-1 small ps-4">
+                    <li><a href="{% url 'platform_dashboard' %}" class="link-dark d-inline-flex text-decoration-none rounded p-1">Maestro de Tenants</a></li>
+                    <li><a href="{% url 'platform_tenant_list' %}" class="link-dark d-inline-flex text-decoration-none rounded p-1">Gestión de Empresas</a></li>
+                </ul>
+            </div>
+        </li>
+        {% endif %}
+    </ul>
+</div>
+
+<style>
+    .btn-toggle[aria-expanded="true"] .transition-icon { transform: rotate(90deg); }
+    .transition-icon { transition: transform 0.35s ease; }
+</style>

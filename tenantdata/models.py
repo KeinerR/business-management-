@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.conf import settings
 from django.db import models
 
@@ -33,6 +35,9 @@ class Employee(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ["first_name", "last_name"]
 
     def __str__(self):
         return f"{self.first_name} {self.last_name}"
@@ -188,6 +193,37 @@ class CurrencyRate(models.Model):
 
     def __str__(self):
         return f"{self.currency} {self.rate_date}: {self.rate_to_local}"
+
+
+class TaxRule(models.Model):
+    IVA = "IVA"
+    RETENCION_FUENTE = "RETENCION_FUENTE"
+    RETENCION_ICA = "RETENCION_ICA"
+    OTRO = "OTRO"
+
+    RULE_TYPE_CHOICES = (
+        (IVA, "IVA"),
+        (RETENCION_FUENTE, "Retención en la Fuente"),
+        (RETENCION_ICA, "Retención ICA"),
+        (OTRO, "Otro Impuesto/Retención"),
+    )
+
+    business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name="tax_rules")
+    name = models.CharField(max_length=120)
+    rule_type = models.CharField(max_length=50, choices=RULE_TYPE_CHOICES)
+    percentage = models.DecimalField(max_digits=5, decimal_places=2)  # e.g., 19 for 19% IVA, 2.5 for 2.5% Retefuente
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("name",)
+        verbose_name = "Regla Tributaria"
+        verbose_name_plural = "Reglas Tributarias"
+        unique_together = ("business", "name", "rule_type")
+
+    def __str__(self):
+        return f"{self.name} ({self.percentage}%)"
 
 
 class FinancialEntry(models.Model):
@@ -353,15 +389,12 @@ class Invoice(models.Model):
         blank=True,
         related_name="invoices",
     )
-    invoice_number = models.CharField(max_length=50, unique=True, blank=True, null=True)
+    invoice_number = models.CharField(max_length=50, unique=True, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=DRAFT)
     issue_date = models.DateField()
     due_date = models.DateField(null=True, blank=True)
     description = models.TextField(blank=True)
-    subtotal = models.DecimalField(max_digits=14, decimal_places=2, default=0)
-    tax_percentage = models.DecimalField(
-        max_digits=5, decimal_places=2, default=0
-    )  # e.g., 19 for 19% IVA
+    subtotal = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
     tax_amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     total = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     currency = models.CharField(
@@ -384,6 +417,7 @@ class Invoice(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    tax_rules = models.ManyToManyField(TaxRule, blank=True, related_name="quotes")
 
     class Meta:
         ordering = ("-issue_date", "-created_at")
@@ -397,18 +431,31 @@ class Invoice(models.Model):
     def __str__(self):
         return f"Invoice {self.invoice_number} - {self.get_status_display()}"
 
+    def generate_next_invoice_number(self):
+        prefix = "FAC-"
+        last_invoice = Invoice.objects.filter(business=self.business, invoice_number__startswith=prefix).order_by("-created_at").first()
+        if last_invoice:
+            match = re.search(r'\d+$', last_invoice.invoice_number)
+            last_number = int(match.group(0)) if match else 0
+            next_number = last_number + 1
+            return f"{prefix}{next_number:06d}"
+        return f"{prefix}000001"
+
     def save(self, *args, **kwargs):
         if not self.invoice_number:
-            import uuid
-
-            self.invoice_number = f"REC-{str(uuid.uuid4())[:8].upper()}"
+            self.invoice_number = self.generate_next_invoice_number()
         super().save(*args, **kwargs)
 
     def calculate_totals(self, subtotal):
         self.subtotal = subtotal
-        self.tax_amount = (subtotal * self.tax_percentage) / 100
-        self.total = subtotal + self.tax_amount
-        return self.total
+        self.tax_amount = Decimal("0.00")
+        self.retention_amount = Decimal("0.00")
+        for rule in self.tax_rules.all():
+            if rule.rule_type == TaxRule.IVA:
+                self.tax_amount += (subtotal * rule.percentage) / 100
+            elif rule.rule_type in [TaxRule.RETENCION_FUENTE, TaxRule.RETENCION_ICA]:
+                self.retention_amount += (subtotal * rule.percentage) / 100
+        self.total = subtotal + self.tax_amount - self.retention_amount
 
 
 class Payment(models.Model):
@@ -492,18 +539,14 @@ class Quote(models.Model):
         related_name="quotes",
     )
 
-    quote_number = models.CharField(max_length=50, unique=True, blank=True, null=True)
+    quote_number = models.CharField(max_length=50, unique=True, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=DRAFT)
-
     issue_date = models.DateField()
     due_date = models.DateField(null=True, blank=True)
-
     description = models.TextField(blank=True)
-    subtotal = models.DecimalField(max_digits=14, decimal_places=2, default=0)
-    tax_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    subtotal = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
     tax_amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     total = models.DecimalField(max_digits=14, decimal_places=2, default=0)
-
     currency = models.CharField(
         max_length=12, choices=FinancialEntry.CURRENCY_CHOICES, default="COP"
     )
@@ -534,6 +577,7 @@ class Quote(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    tax_rules = models.ManyToManyField(TaxRule, blank=True, related_name="invoices")
 
     class Meta:
         ordering = ("-issue_date", "-created_at")
@@ -547,17 +591,31 @@ class Quote(models.Model):
     def __str__(self):
         return f"Quote {self.quote_number} - {self.get_status_display()}"
 
+    def generate_next_quote_number(self):
+        prefix = "QUO-"
+        last_quote = Quote.objects.filter(business=self.business, quote_number__startswith=prefix).order_by("-created_at").first()
+        if last_quote:
+            match = re.search(r'\d+$', last_quote.quote_number)
+            last_number = int(match.group(0)) if match else 0
+            next_number = last_number + 1
+            return f"{prefix}{next_number:06d}"
+        return f"{prefix}000001"
+
     def save(self, *args, **kwargs):
         if not self.quote_number:
-            import uuid
-            self.quote_number = f"REC-{str(uuid.uuid4())[:8].upper()}"
+            self.quote_number = self.generate_next_quote_number()
         super().save(*args, **kwargs)
 
     def calculate_totals(self, subtotal):
         self.subtotal = subtotal
-        self.tax_amount = (subtotal * self.tax_percentage) / 100
-        self.total = subtotal + self.tax_amount
-        return self.total
+        self.tax_amount = Decimal("0.00")
+        self.retention_amount = Decimal("0.00")
+        for rule in self.tax_rules.all():
+            if rule.rule_type == TaxRule.IVA:
+                self.tax_amount += (subtotal * rule.percentage) / 100
+            elif rule.rule_type in [TaxRule.RETENCION_FUENTE, TaxRule.RETENCION_ICA]:
+                self.retention_amount += (subtotal * rule.percentage) / 100
+        self.total = subtotal + self.tax_amount - self.retention_amount
 
 
 class QuoteItem(models.Model):
@@ -749,5 +807,274 @@ class Reconciliation(models.Model):
 
     def __str__(self):
         return f"Reconciliation {self.bank_transaction_id} - {self.status}"
+
+
+class CreditNote(models.Model):
+    DRAFT = "draft"
+    ISSUED = "issued"
+    CANCELLED = "cancelled"
+    STATUS_CHOICES = [
+        (DRAFT, "Borrador"),
+        (ISSUED, "Emitida"),
+        (CANCELLED, "Anulada"),
+    ]
+
+    credit_note_number = models.CharField(max_length=100, unique=True, blank=True)
+    invoice = models.ForeignKey(Invoice, on_delete=models.SET_NULL, null=True, blank=True, related_name="credit_notes")
+    business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name="credit_notes")
+    third_party = models.ForeignKey(ThirdParty, on_delete=models.SET_NULL, null=True, blank=True, related_name="credit_notes")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=DRAFT)
+    issue_date = models.DateField()
+    subtotal = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00")) # Refactor: calculate and return, don't save
+    tax_amount = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    retention_amount = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    total = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    currency = models.CharField(max_length=12, choices=FinancialEntry.CURRENCY_CHOICES, default="COP")
+    description = models.TextField(blank=True, null=True)
+    notes = models.TextField(blank=True, null=True)
+    financial_entry = models.OneToOneField(FinancialEntry, on_delete=models.SET_NULL, null=True, blank=True, related_name="credit_note")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="created_credit_notes")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    tax_rules = models.ManyToManyField(TaxRule, blank=True, related_name="credit_notes")
+
+    class Meta:
+        unique_together = ("business", "credit_note_number")
+        ordering = ["-issue_date", "-created_at"]
+
+    def __str__(self):
+        return f"Credit Note {self.credit_note_number} for {self.third_party.name if self.third_party else 'N/A'}"
+
+    def calculate_totals(self, subtotal):
+        self.subtotal = subtotal
+        self.tax_amount = Decimal("0.00")
+        self.retention_amount = Decimal("0.00")
+        for rule in self.tax_rules.all():
+            if rule.rule_type == TaxRule.IVA:
+                self.tax_amount += (subtotal * rule.percentage) / 100
+            elif rule.rule_type in [TaxRule.RETENCION_FUENTE, TaxRule.RETENCION_ICA]:
+                self.retention_amount += (subtotal * rule.percentage) / 100
+        self.total = subtotal + self.tax_amount - self.retention_amount
+
+    def save(self, *args, **kwargs):
+        if not self.credit_note_number:
+            prefix = "CN-"
+            last_cn = CreditNote.objects.filter(business=self.business, credit_note_number__startswith=prefix).order_by("-created_at").first()
+            if last_cn:
+                match = re.search(r'\d+$', last_cn.credit_note_number)
+                last_number = int(match.group(0)) if match else 0
+                next_number = last_number + 1
+                self.credit_note_number = f"{prefix}{next_number:06d}"
+            else:
+                self.credit_note_number = f"{prefix}000001"
+        super().save(*args, **kwargs)
+
+
+class CreditNoteItem(models.Model):
+    credit_note = models.ForeignKey(CreditNote, on_delete=models.CASCADE, related_name="items")
+    description = models.CharField(max_length=255)
+    quantity = models.DecimalField(max_digits=10, decimal_places=2, default=1)
+    unit_price = models.DecimalField(max_digits=14, decimal_places=2)
+    subtotal = models.DecimalField(max_digits=14, decimal_places=2)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Item de Nota de Crédito"
+        verbose_name_plural = "Items de Nota de Crédito"
+
+    def __str__(self):
+        return f"{self.description} ({self.quantity} x {self.unit_price})"
+
+
+class DebitNote(models.Model):
+    DRAFT = "draft"
+    ISSUED = "issued"
+    CANCELLED = "cancelled"
+    STATUS_CHOICES = [
+        (DRAFT, "Borrador"),
+        (ISSUED, "Emitida"),
+        (CANCELLED, "Anulada"),
+    ]
+
+    debit_note_number = models.CharField(max_length=100, unique=True, blank=True)
+    invoice = models.ForeignKey(Invoice, on_delete=models.SET_NULL, null=True, blank=True, related_name="debit_notes")
+    business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name="debit_notes")
+    third_party = models.ForeignKey(ThirdParty, on_delete=models.SET_NULL, null=True, blank=True, related_name="debit_notes")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=DRAFT)
+    issue_date = models.DateField()
+    subtotal = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00")) # Refactor: calculate and return, don't save
+    tax_amount = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    retention_amount = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    total = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    currency = models.CharField(max_length=12, choices=FinancialEntry.CURRENCY_CHOICES, default="COP")
+    description = models.TextField(blank=True, null=True)
+    notes = models.TextField(blank=True, null=True)
+    financial_entry = models.OneToOneField(FinancialEntry, on_delete=models.SET_NULL, null=True, blank=True, related_name="debit_note")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="created_debit_notes")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    tax_rules = models.ManyToManyField(TaxRule, blank=True, related_name="debit_notes")
+
+    class Meta:
+        unique_together = ("business", "debit_note_number")
+        ordering = ["-issue_date", "-created_at"]
+
+    def __str__(self):
+        return f"Debit Note {self.debit_note_number} for {self.third_party.name if self.third_party else 'N/A'}"
+
+    def calculate_totals(self, subtotal):
+        self.subtotal = subtotal
+        self.tax_amount = Decimal("0.00")
+        self.retention_amount = Decimal("0.00")
+        for rule in self.tax_rules.all():
+            if rule.rule_type == TaxRule.IVA:
+                self.tax_amount += (subtotal * rule.percentage) / 100
+            elif rule.rule_type in [TaxRule.RETENCION_FUENTE, TaxRule.RETENCION_ICA]:
+                self.retention_amount += (subtotal * rule.percentage) / 100
+        self.total = subtotal + self.tax_amount - self.retention_amount
+
+    def save(self, *args, **kwargs):
+        if not self.debit_note_number:
+            prefix = "DN-"
+            last_dn = DebitNote.objects.filter(business=self.business, debit_note_number__startswith=prefix).order_by("-created_at").first()
+            if last_dn:
+                match = re.search(r'\d+$', last_dn.debit_note_number)
+                last_number = int(match.group(0)) if match else 0
+                next_number = last_number + 1
+                self.debit_note_number = f"{prefix}{next_number:06d}"
+            else:
+                self.debit_note_number = f"{prefix}000001"
+        super().save(*args, **kwargs)
+
+
+class DebitNoteItem(models.Model):
+    debit_note = models.ForeignKey(DebitNote, on_delete=models.CASCADE, related_name="items")
+    description = models.CharField(max_length=255)
+    quantity = models.DecimalField(max_digits=10, decimal_places=2, default=1)
+    unit_price = models.DecimalField(max_digits=14, decimal_places=2)
+    subtotal = models.DecimalField(max_digits=14, decimal_places=2)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Item de Nota de Débito"
+        verbose_name_plural = "Items de Nota de Débito"
+
+    def __str__(self):
+        return f"{self.description} ({self.quantity} x {self.unit_price})"
+
+
+class ImportBatch(models.Model):
+    FINANCIAL_ENTRY = 'financial_entry'
+    THIRD_PARTY = 'third_party'
+    TARGET_MODEL_CHOICES = [
+        (FINANCIAL_ENTRY, 'Movimiento Financiero'),
+        (THIRD_PARTY, 'Tercero'),
+    ]
+
+    business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name='import_batches')
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='import_batches_created')
+    created_at = models.DateTimeField(auto_now_add=True)
+    file_name = models.CharField(max_length=255)
+    target_model = models.CharField(max_length=50, choices=TARGET_MODEL_CHOICES)
+    status = models.CharField(max_length=50, default='uploaded') # uploaded, previewed, confirmed, failed
+    total_rows = models.IntegerField(default=0)
+    processed_rows = models.IntegerField(default=0)
+    failed_rows = models.IntegerField(default=0)
+    notes = models.TextField(blank=True, null=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = "Lote de Importación"
+        verbose_name_plural = "Lotes de Importación"
+
+    def __str__(self):
+        return f"Import Batch {self.pk} - {self.target_model} - {self.file_name}"
+
+class ImportedRecord(models.Model):
+    batch = models.ForeignKey(ImportBatch, on_delete=models.CASCADE, related_name='records')
+    row_data = models.JSONField() # Stores the raw data of the row
+    status = models.CharField(max_length=50, default='pending') # pending, valid, invalid, processed
+    validation_errors = models.JSONField(default=list, blank=True)
+    processed_object_id = models.CharField(max_length=255, blank=True, null=True) # FK to FinancialEntry or ThirdParty
+    processed_object_model = models.CharField(max_length=50, blank=True, null=True)
+
+    class Meta:
+        ordering = ['id']
+        verbose_name = "Registro Importado"
+        verbose_name_plural = "Registros Importados"
+
+    def __str__(self):
+        return f"Record {self.id} in Batch {self.batch.pk}"
+
+
+class Budget(models.Model):
+    DRAFT = "draft"
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+    STATUS_CHOICES = [
+        (DRAFT, "Borrador"),
+        (ACTIVE, "Activo"),
+        (COMPLETED, "Completado"),
+        (CANCELLED, "Cancelado"),
+    ]
+
+    business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name="budgets")
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True, null=True)
+    period_start_date = models.DateField()
+    period_end_date = models.DateField()
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=DRAFT)
+    total_budgeted_amount = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    currency = models.CharField(max_length=12, choices=FinancialEntry.CURRENCY_CHOICES, default="COP")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="created_budgets")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-period_start_date", "name"]
+        verbose_name = "Presupuesto"
+        verbose_name_plural = "Presupuestos"
+        unique_together = ("business", "name", "period_start_date", "period_end_date")
+
+    def __str__(self):
+        return f"{self.name} ({self.period_start_date} - {self.period_end_date})"
+
+    def calculate_total_budgeted_amount(self):
+        self.total_budgeted_amount = self.lines.aggregate(models.Sum('budgeted_amount'))['budgeted_amount__sum'] or Decimal("0.00")
+        # self.save(update_fields=['total_budgeted_amount']) # Don't save here, let the view handle it
+
+
+class BudgetLine(models.Model):
+    budget = models.ForeignKey(Budget, on_delete=models.CASCADE, related_name="lines")
+    category = models.ForeignKey(FinancialCategory, on_delete=models.SET_NULL, null=True, blank=True, related_name="budget_lines")
+    project = models.ForeignKey(Project, on_delete=models.SET_NULL, null=True, blank=True, related_name="budget_lines")
+    concept = models.CharField(max_length=255)
+    budgeted_amount = models.DecimalField(max_digits=14, decimal_places=2)
+    currency = models.CharField(max_length=12, choices=FinancialEntry.CURRENCY_CHOICES, default="COP")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["concept"]
+        verbose_name = "Línea de Presupuesto"
+        verbose_name_plural = "Líneas de Presupuesto"
+
+    def __str__(self):
+        return f"{self.concept} ({self.budgeted_amount} {self.currency})"
+
+    @property
+    def actual_amount(self):
+        # Calculate actual amount from FinancialEntry within the budget period
+        # This is a simplified version. A more robust implementation would consider
+        # entry_type (income/expense), specific categories/projects, and currencies.
+        # For now, sum up expenses for the given category/project within the budget period
+        filters = {'business': self.budget.business, 'entry_date__range': (self.budget.period_start_date, self.budget.period_end_date), 'currency': self.currency, 'status__in': [FinancialEntry.PAID, FinancialEntry.PARTIAL]}
+        if self.category:
+            filters['category'] = self.category
+        if self.project:
+            filters['project'] = self.project
+        
+        return FinancialEntry.objects.filter(entry_type=FinancialEntry.EXPENSE, **filters).aggregate(models.Sum('amount'))['amount__sum'] or Decimal("0.00")
     
          

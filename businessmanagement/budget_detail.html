@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-4">
+    <div class="card shadow">
+        <div class="card-header d-flex justify-content-between">
+            <h4>{{ page_title }}</h4>
+            <div>
+                <a href="{% url 'budget_list' %}" class="btn btn-secondary btn-sm">Volver</a>
+                {% if budget.status != 'cancelled' %}
+                <a href="{% url 'budget_edit' budget.id %}" class="btn btn-warning btn-sm">Editar</a>
+                {# TODO: Add cancel functionality #}
+                {% endif %}
+            </div>
+        </div>
+        <div class="card-body">
+            <div class="row mb-4">
+                <div class="col-md-6">
+                    <p><strong>Nombre:</strong> {{ budget.name }}</p>
+                    <p><strong>Período:</strong> {{ budget.period_start_date|date:"d/m/Y" }} - {{ budget.period_end_date|date:"d/m/Y" }}</p>
+                    <p><strong>Descripción:</strong> {{ budget.description|default:"N/A" }}</p>
+                </div>
+                <div class="col-md-6 text-end">
+                    <p><strong>Moneda:</strong> {{ budget.currency }}</p>
+                    <p><strong>Estado:</strong> 
+                        <span class="badge {% if budget.status == 'active' %}bg-success{% elif budget.status == 'completed' %}bg-info{% elif budget.status == 'cancelled' %}bg-danger{% else %}bg-secondary{% endif %}">
+                            {{ budget.get_status_display }}
+                        </span>
+                    </p>
+                    <p><strong>Monto Presupuestado Total:</strong> {{ budget.total_budgeted_amount }} {{ budget.currency }}</p>
+                    <p><strong>Monto Real Total:</strong> {{ budget.total_actual_amount }} {{ budget.currency }}</p>
+                </div>
+            </div>
+
+            <hr>
+            <h5>Líneas de Presupuesto</h5>
+            {% if budget.lines.all %}
+            <div class="table-responsive">
+                <table class="table table-bordered table-sm">
+                    <thead>
+                        <tr>
+                            <th>Concepto</th>
+                            <th>Categoría</th>
+                            <th>Proyecto</th>
+                            <th class="text-end">Monto Presupuestado</th>
+                            <th class="text-end">Monto Real</th>
+                            <th class="text-end">Diferencia</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for line in budget.lines.all %}
+                        <tr>
+                            <td>{{ line.concept }}</td>
+                            <td>{{ line.category.name|default:"N/A" }}</td>
+                            <td>{{ line.project.name|default:"N/A" }}</td>
+                            <td class="text-end">{{ line.budgeted_amount }} {{ line.currency }}</td>
+                            <td class="text-end">{{ line.actual_amount }} {{ line.currency }}</td>
+                            <td class="text-end">
+                                {% with diff=line.budgeted_amount|sub:line.actual_amount %}
+                                    {% if diff > 0 %}
+                                        <span class="text-success">{{ diff }}</span>
+                                    {% elif diff < 0 %}
+                                        <span class="text-danger">{{ diff }}</span>
+                                    {% else %}
+                                        {{ diff }}
+                                    {% endif %}
+                                {% endwith %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                    <tfoot>
+                        <tr class="table-primary">
+                            <th colspan="3" class="text-end">Total Presupuestado:</th>
+                            <th class="text-end">{{ budget.total_budgeted_amount }} {{ budget.currency }}</th>
+                            <th class="text-end">Total Real:</th>
+                            <th class="text-end">{{ budget.total_actual_amount }} {{ budget.currency }}</th>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+            {% else %}
+            <p>Este presupuesto no tiene líneas de presupuesto.</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% load custom_filters %} {# Assuming you have a custom filter for subtraction if needed #}

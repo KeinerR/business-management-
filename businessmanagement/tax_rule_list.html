@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Reglas Tributarias</h2>
+        <a href="{% url 'tax_rule_create' %}" class="btn btn-primary">Nueva Regla Tributaria</a>
+    </div>
+
+    <div class="card shadow-sm">
+        <div class="card-body">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Nombre</th>
+                        <th>Tipo</th>
+                        <th>Porcentaje</th>
+                        <th>Activa</th>
+                        <th>Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for rule in tax_rules %}
+                    <tr>
+                        <td>{{ rule.name }}</td>
+                        <td>{{ rule.get_rule_type_display }}</td>
+                        <td>{{ rule.percentage }}%</td>
+                        <td>
+                            {% if rule.is_active %}
+                                <span class="badge bg-success">Sí</span>
+                            {% else %}
+                                <span class="badge bg-danger">No</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <a href="{% url 'tax_rule_edit' rule.id %}" class="btn btn-sm btn-outline-warning">Editar</a>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="5" class="text-center">No hay reglas tributarias registradas.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

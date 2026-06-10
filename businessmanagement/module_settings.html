@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>{{ page_title }}</h2>
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{% url 'dashboard' %}">Dashboard</a></li>
+                <li class="breadcrumb-item active">Configuración de Módulos</li>
+            </ol>
+        </nav>
+    </div>
+
+    <div class="alert alert-info shadow-sm border-0">
+        <i class="bi bi-info-circle-fill me-2"></i>
+        Esta sección muestra los módulos técnicos habilitados para su instancia. Si requiere módulos adicionales, contacte al administrador de la plataforma.
+    </div>
+
+    <div class="card shadow-sm border-0">
+        <div class="card-header bg-dark text-white">
+            <h5 class="mb-0">Inventario de Módulos Activos</h5>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover mb-0 align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Módulo Funcional</th>
+                            <th>Identificador Técnico</th>
+                            <th>Categoría</th>
+                            <th>Compatibilidad</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for mod in module_details %}
+                        <tr>
+                            <td><strong>{{ mod.label }}</strong></td>
+                            <td><code class="text-primary bg-light px-2 py-1 rounded">{{ mod.key }}</code></td>
+                            <td><span class="badge rounded-pill bg-secondary">{{ mod.group }}</span></td>
+                            <td>
+                                {% if mod.is_business %}
+                                    <span class="badge bg-primary text-white">Empresarial</span>
+                                {% endif %}
+                                {% if mod.is_individual %}
+                                    <span class="badge bg-success text-white">Personal</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
