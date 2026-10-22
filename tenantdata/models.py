@@ -396,6 +396,9 @@ class Invoice(models.Model):
     description = models.TextField(blank=True)
     subtotal = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
     tax_amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    retention_amount = models.DecimalField(
+        max_digits=14, decimal_places=2, default=Decimal("0.00")
+    )
     total = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     currency = models.CharField(
         max_length=12, choices=FinancialEntry.CURRENCY_CHOICES, default="COP"
@@ -417,7 +420,7 @@ class Invoice(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    tax_rules = models.ManyToManyField(TaxRule, blank=True, related_name="quotes")
+    tax_rules = models.ManyToManyField(TaxRule, blank=True, related_name="invoices")
 
     class Meta:
         ordering = ("-issue_date", "-created_at")
@@ -546,6 +549,9 @@ class Quote(models.Model):
     description = models.TextField(blank=True)
     subtotal = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
     tax_amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    retention_amount = models.DecimalField(
+        max_digits=14, decimal_places=2, default=Decimal("0.00")
+    )
     total = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     currency = models.CharField(
         max_length=12, choices=FinancialEntry.CURRENCY_CHOICES, default="COP"
@@ -577,7 +583,7 @@ class Quote(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    tax_rules = models.ManyToManyField(TaxRule, blank=True, related_name="invoices")
+    tax_rules = models.ManyToManyField(TaxRule, blank=True, related_name="quotes")
 
     class Meta:
         ordering = ("-issue_date", "-created_at")

@@ -6,6 +6,7 @@ from django.core.exceptions import ValidationError
 from django.forms import ModelChoiceField
 
 from tenantdata.models import (
+    Business,
     CurrencyRate,
     Employee,
     FinancialCategory,
@@ -34,6 +35,17 @@ from django.forms import inlineformset_factory
 
 from .models import Domain, Tenant
 from .modules import AVAILABLE_MODULES, MODULES_INDIVIDUAL, MODULES_BUSINESS
+
+
+class TwoDecimalNumberInput(forms.NumberInput):
+    def format_value(self, value):
+        if value in (None, ""):
+            return super().format_value(value)
+        try:
+            return format(value, ".2f")
+        except (TypeError, ValueError):
+            return super().format_value(value)
+
 
 class PlatformTenantCreateForm(forms.ModelForm):
     domain = forms.CharField(
@@ -367,6 +379,16 @@ class BudgetLineForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         self.fields["category"].queryset = FinancialCategory.objects.filter(is_active=True).order_by("name")
         self.fields["project"].queryset = Project.objects.all().order_by("name")
+        self.fields["tax_rules"] = forms.ModelMultipleChoiceField(
+            queryset=TaxRule.objects.filter(
+                business=Business.objects.first(), is_active=True
+            ).order_by("name"),
+            required=False,
+            widget=forms.CheckboxSelectMultiple,
+            label="Reglas Tributarias",
+        )
+        if self.instance and self.instance.pk:
+            self.fields["tax_rules"].initial = self.instance.tax_rules.all()
         self.fields["category"].required = False
         self.fields["project"].required = False
         for field in self.fields.values():
@@ -489,16 +511,6 @@ class FinancialEntryForm(forms.ModelForm):
         return amount
 
 
-class TwoDecimalNumberInput(forms.NumberInput):
-    def format_value(self, value):
-        if value in (None, ""):
-            return super().format_value(value)
-        try:
-            return format(value, ".2f")
-        except (TypeError, ValueError):
-            return super().format_value(value)
-
-
 class CurrencyRateForm(forms.ModelForm):
     class Meta:
         model = CurrencyRate
@@ -588,7 +600,6 @@ class InvoiceForm(forms.ModelForm):
             "status",
             "issue_date",
             "due_date",
-            "tax_percentage",
             "currency",
             "description",
             "notes",
@@ -600,7 +611,6 @@ class InvoiceForm(forms.ModelForm):
             "status": "Estado",
             "issue_date": "Fecha de emisión",
             "due_date": "Fecha de vencimiento",
-            "tax_percentage": "IVA (%)",
             "currency": "Moneda",
             "description": "Descripción",
             "notes": "Notas",
@@ -626,11 +636,21 @@ class InvoiceForm(forms.ModelForm):
             self.fields["invoice_number"].help_text = (
                 "Opcional. Se generará uno automático si se deja vacío."
             )
-            self.fields["tax_percentage"].initial = 0
             self.fields["project"].required = False
 
         for field_name, field in self.fields.items():
             field.widget.attrs.update({"class": "form-control"})
+
+    def clean(self):
+        cleaned_data = super().clean()
+        issue_date = cleaned_data.get("issue_date")
+        due_date = cleaned_data.get("due_date")
+        if issue_date and due_date and due_date < issue_date:
+            self.add_error(
+                "due_date",
+                "La fecha de vencimiento no puede ser anterior a la emisión.",
+            )
+        return cleaned_data
 
 
 class QuoteForm(forms.ModelForm):
@@ -643,7 +663,6 @@ class QuoteForm(forms.ModelForm):
             "status",
             "issue_date",
             "due_date",
-            "tax_percentage",
             "currency",
             "description",
             "notes",
@@ -655,7 +674,6 @@ class QuoteForm(forms.ModelForm):
             "status": "Estado",
             "issue_date": "Fecha de emisión",
             "due_date": "Fecha de vencimiento",
-            "tax_percentage": "IVA (%)",
             "currency": "Moneda",
             "description": "Descripción",
             "notes": "Notas",
@@ -682,7 +700,6 @@ class QuoteForm(forms.ModelForm):
             self.fields["quote_number"].help_text = (
                 "Opcional. Se generará uno automático si se deja vacío."
             )
-            self.fields["tax_percentage"].initial = 0
             self.fields["project"].required = False
 
         for field_name, field in self.fields.items():
@@ -696,6 +713,17 @@ class QuoteForm(forms.ModelForm):
         )
         if self.instance and self.instance.pk:
             self.fields["tax_rules"].initial = self.instance.tax_rules.all()
+
+    def clean(self):
+        cleaned_data = super().clean()
+        issue_date = cleaned_data.get("issue_date")
+        due_date = cleaned_data.get("due_date")
+        if issue_date and due_date and due_date < issue_date:
+            self.add_error(
+                "due_date",
+                "La fecha de vencimiento no puede ser anterior a la emisión.",
+            )
+        return cleaned_data
 
 
 class InvoiceItemForm(forms.ModelForm):
@@ -746,6 +774,12 @@ class TaxRuleForm(forms.ModelForm):
                 field.widget.attrs.update(
                     {"class": "form-control", "autocomplete": "off"}
                 )
+
+    def clean_percentage(self):
+        percentage = self.cleaned_data["percentage"]
+        if percentage <= 0 or percentage > 100:
+            raise ValidationError("El porcentaje debe estar entre 0 y 100.")
+        return percentage
 
 
 class CreditNoteForm(forms.ModelForm):

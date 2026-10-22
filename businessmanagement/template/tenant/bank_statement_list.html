@@ -1,0 +1,61 @@
+{% extends "tenant/base.html" %}
+{% load i18n %}
+
+{% block workspace_content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>{{ page_title|default:"Extractos Bancarios" }}</h2>
+        <div>
+            <a href="{% url 'bank_statement_import_csv' %}" class="btn btn-primary">
+                <i class="bi bi-upload"></i> Importar CSV
+            </a>
+        </div>
+    </div>
+
+    {% if statements %}
+    <div class="table-responsive">
+        <table class="table table-hover">
+            <thead class="table-light">
+                <tr>
+                    <th>Periodo</th>
+                    <th>Cuenta</th>
+                    <th>Banco</th>
+                    <th>Origen</th>
+                    <th>Transacciones</th>
+                    <th>Acciones</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for stmt in statements %}
+                <tr>
+                    <td>
+                        {% if stmt.statement_date_from %}{{ stmt.statement_date_from|date:"d/m/Y" }}{% else %}-{% endif %}
+                        -
+                        {% if stmt.statement_date_to %}{{ stmt.statement_date_to|date:"d/m/Y" }}{% else %}-{% endif %}
+                    </td>
+                    <td>{{ stmt.bank_account.name }}</td>
+                    <td>{{ stmt.bank_account.bank_name }}</td>
+                    <td>{{ stmt.source|default:"Importado" }}</td>
+                    <td class="text-center">
+                        <span class="badge bg-secondary">{{ stmt.transactions.count }}</span>
+                    </td>
+                    <td>
+                        <a href="{% url 'bank_transaction_suggestions' stmt.id %}" 
+                           class="btn btn-sm btn-outline-primary" title="Ver transacciones">
+                            <i class="bi bi-arrow-left-right"></i>
+                        </a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="alert alert-info">
+        <i class="bi bi-info-circle"></i> 
+        No hay extractos bancarios importados. 
+        <a href="{% url 'bank_statement_import_csv' %}">Importa el primero</a>.
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

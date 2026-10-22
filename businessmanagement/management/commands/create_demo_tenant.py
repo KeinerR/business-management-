@@ -14,6 +14,7 @@ from tenantdata.models import (
 
 from businessmanagement.models import Domain, Tenant
 from businessmanagement.views import ensure_default_tenant_groups
+from businessmanagement.modules import AVAILABLE_MODULES, MODULES_INDIVIDUAL, MODULES_BUSINESS
 
 
 class Command(BaseCommand):
@@ -50,23 +51,18 @@ class Command(BaseCommand):
         business_name = options["business_name"]
         tenant_type = options["type"]
 
+        # Get all module names from AVAILABLE_MODULES
+        all_modules = [m[0] for m in AVAILABLE_MODULES]
+        
+        # Use the predefined module lists
         if tenant_type == Tenant.TYPE_INDIVIDUAL:
-            enabled_modules = [
-                "finances",
-                "projects",
-                "third_parties",
-                "categories",
-            ]
+            enabled_modules = MODULES_INDIVIDUAL + all_modules
         else:
-            enabled_modules = [
-                "finances",
-                "projects",
-                "third_parties",
-                "categories",
-                "invoices",
-                "employees",
-                "currency_rates",
-            ]
+            enabled_modules = MODULES_BUSINESS + all_modules
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        enabled_modules = [x for x in enabled_modules if not (x in seen or seen.add(x))]
 
         tenant, created = Tenant.objects.get_or_create(
             schema_name=schema_name,
@@ -79,9 +75,11 @@ class Command(BaseCommand):
         if created:
             self.stdout.write(self.style.SUCCESS(f"Tenant creado: {schema_name}"))
         else:
+            # Update existing tenant with all modules
+            tenant.enabled_modules = enabled_modules
             tenant.tenant_type = tenant_type
-            tenant.save()
-            self.stdout.write(self.style.WARNING(f"Tenant existente: {schema_name}"))
+            tenant.save(update_fields=['enabled_modules', 'tenant_type'])
+            self.stdout.write(self.style.WARNING(f"Tenant existente actualizado: {schema_name}"))
 
         domain, domain_created = Domain.objects.get_or_create(
             domain=domain_name,

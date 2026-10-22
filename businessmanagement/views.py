@@ -1517,9 +1517,9 @@ def invoice_create(request):
                             )
                             subtotal += item_subtotal
 
+                    invoice.tax_rules.set(form.cleaned_data["tax_rules"])
                     invoice.calculate_totals(subtotal)
                     invoice.save(update_fields=["subtotal", "tax_amount", "retention_amount", "total"])
-                    invoice.tax_rules.set(form.cleaned_data["tax_rules"])
 
                     record_audit_event(
                         request,
@@ -1592,9 +1592,9 @@ def invoice_edit(request, invoice_id):
                             )
                             subtotal += item_subtotal
 
+                    invoice.tax_rules.set(form.cleaned_data["tax_rules"])
                     invoice.calculate_totals(subtotal)
                     invoice.save(update_fields=["subtotal", "tax_amount", "retention_amount", "total"])
-                    invoice.tax_rules.set(form.cleaned_data["tax_rules"])
 
                     record_audit_event(
                         request,
@@ -1814,14 +1814,6 @@ def invoice_delete(request, invoice_id):
     # B2 FIX: Removed direct invoice.delete() in favor of invoice_cancel # B2 FIX: Removed duplicated function
     messages.error(request, "La eliminación directa de facturas no está permitida. Utilice la opción de anular.")
 
-    record_audit_event(
-        request,
-        AuditEvent.DELETE,
-        "invoice",
-        f"Factura eliminada: {invoice_number}",
-        entity_id=invoice_id,
-    )
-    # messages.success(request, "Factura eliminada correctamente.") # Removed success message for deletion
     return redirect("invoice_list")
 
 
@@ -1935,6 +1927,7 @@ def quote_create(request):
                         )
                         subtotal += item_subtotal
 
+                quote.tax_rules.set(form.cleaned_data["tax_rules"])
                 quote.calculate_totals(subtotal)
                 quote.save(update_fields=["subtotal", "tax_amount", "retention_amount", "total"])
 
@@ -1999,6 +1992,7 @@ def quote_edit(request, quote_id):
                             )
                             subtotal += item_subtotal
 
+                    quote.tax_rules.set(form.cleaned_data["tax_rules"])
                     quote.calculate_totals(subtotal)
                     quote.save(update_fields=["subtotal", "tax_amount", "retention_amount", "total"])
                     messages.success(request, "Cotización actualizada correctamente.")
@@ -2256,6 +2250,7 @@ def credit_note_create(request):
                             )
                             subtotal += item_subtotal
 
+                    credit_note.tax_rules.set(form.cleaned_data["tax_rules"])
                     credit_note.calculate_totals(subtotal)
                     credit_note.save(update_fields=["subtotal", "tax_amount", "retention_amount", "total"])
 
@@ -2352,6 +2347,7 @@ def credit_note_edit(request, credit_note_id):
                             )
                             subtotal += item_subtotal
 
+                    credit_note.tax_rules.set(form.cleaned_data["tax_rules"])
                     credit_note.calculate_totals(subtotal)
                     credit_note.save(update_fields=["subtotal", "tax_amount", "retention_amount", "total"])
 
@@ -2515,6 +2511,7 @@ def debit_note_create(request):
                             )
                             subtotal += item_subtotal
 
+                    debit_note.tax_rules.set(form.cleaned_data["tax_rules"])
                     debit_note.calculate_totals(subtotal)
                     debit_note.save(update_fields=["subtotal", "tax_amount", "retention_amount", "total"])
 
@@ -2611,6 +2608,7 @@ def debit_note_edit(request, debit_note_id):
                             )
                             subtotal += item_subtotal
 
+                    debit_note.tax_rules.set(form.cleaned_data["tax_rules"])
                     debit_note.calculate_totals(subtotal)
                     debit_note.save(update_fields=["subtotal", "tax_amount", "retention_amount", "total"])
 
@@ -2717,6 +2715,7 @@ def _convert_amount(amount, from_currency, to_currency, rate_date):
 
 @login_required
 @tenant_required
+@module_enabled_required("cartera")
 def cartera_dashboard(request):
     """
     Dashboard explícito de cartera (Accounts Receivable / Payable).
@@ -3148,6 +3147,7 @@ def cartera_aging_excel_export(request):
 
 @login_required
 @tenant_required
+@module_enabled_required("payments")
 def payment_list(request):
     entries = FinancialEntry.objects.all().order_by("-entry_date")
 
@@ -3620,6 +3620,7 @@ def generic_import_batch_detail(request, batch_id):
 
 @login_required
 @tenant_required
+@module_enabled_required("projects")
 def project_list(request):
     projects = Project.objects.select_related("third_party", "owner").all()
     status = request.GET.get("status")
@@ -3832,515 +3833,11 @@ def _compute_payment_match_score(payment: Payment, fin_entry: FinancialEntry, ba
     return score
 
 
-@login_required # B2 FIX: Removed duplicated function
-@tenant_required
-@module_enabled_required("finances")
-@tenant_group_required("Administrador de empresa", "Operador financiero")
-def bank_statement_import_csv(request): # B2 FIX: Removed duplicated function
-    if request.method == "POST":
-        form = BankStatementImportCSVForm(request.POST, request.FILES)
-        if form.is_valid():
-            bank_account = form.cleaned_data["bank_account"]
-            uploaded = form.cleaned_data["file"]
-            delimiter = form.cleaned_data["delimiter"]
-            has_header = form.cleaned_data["has_header"]
-            statement_name = form.cleaned_data["statement_name"] or f"Statement {date.today().isoformat()}"
-
-            statement = BankStatement.objects.create(
-                bank_account=bank_account,
-                statement_date_from=None,
-                statement_date_to=None,
-                source="csv",
-                imported_file=uploaded,
-                created_by=request.user,
-            )
-
-            import io
-            import csv as csv_lib
-
-            raw = uploaded.read()
-            try:
-                text = raw.decode("utf-8")
-            except Exception:
-                text = raw.decode("latin-1")
-            uploaded.seek(0)
-            f = io.StringIO(text)
-            if has_header:
-                reader = csv_lib.DictReader(f, delimiter=delimiter)
-                for row in reader:
-                    date_val = row.get("date") or row.get("fecha")
-                    amount_val = row.get("amount") or row.get("monto")
-                    currency_val = row.get("currency") or row.get("moneda") or bank_account.base_currency
-                    desc_val = row.get("description") or row.get("concept") or row.get("detalle") or ""
-                    external_id = row.get("external_id") or row.get("reference") or row.get("ref") or ""
-
-                    tx_date = _parse_csv_date(date_val)
-                    if not tx_date:
-                        continue
-
-                    try:
-                        amount_dec = Decimal(str(amount_val).replace(",", "."))
-                    except Exception:
-                        continue
-
-                    currency = (currency_val or bank_account.base_currency).strip().upper()
-
-                    BankTransaction.objects.create(
-                        statement=statement,
-                        transaction_date=tx_date,
-                        description=desc_val[:255],
-                        concept=_normalize_text(desc_val)[:255],
-                        amount=amount_dec,
-                        currency=currency,
-                        external_id=external_id[:120],
-                        direction="",
-                        status=BankTransaction.IMPORTED,
-                    )
-            else:
-                messages.error(request, "CSV sin encabezado no soportado en este MVP. Agrega header.")
-                statement.delete()
-                return redirect("bank_statement_import_csv")
-
-            messages.success(request, f"Extracto importado: {statement_name}.")
-            return redirect("bank_transaction_suggestions", statement_id=statement.pk)
-    else:
-        form = BankStatementImportCSVForm()
-
-    return render(
-        request,
-        "tenant/bank_statement_import.html",
-        {"form": form, "page_title": "Importar extracto CSV"},
-    )
-
-@login_required # B2 FIX: Removed duplicated function
-@tenant_required
-@module_enabled_required("finances")
-@tenant_group_required("Administrador de empresa", "Operador financiero")
-def bank_transaction_suggestions(request, statement_id): # B2 FIX: Removed duplicated function
-    statement = BankStatement.objects.filter(pk=statement_id).first()
-    if not statement:
-        messages.error(request, "Extracto no encontrado.")
-        return redirect("dashboard")
-
-    txs = statement.transactions.all().order_by("transaction_date", "created_at")
-
-    reconciliations = []
-    for tx in txs:
-        from_date = tx.transaction_date - timedelta(days=3)
-        to_date = tx.transaction_date + timedelta(days=3)
-
-        payments_qs = Payment.objects.select_related("financial_entry", "created_by").filter(
-            payment_date__gte=from_date,
-            payment_date__lte=to_date,
-            currency=tx.currency,
-        )
-
-        best = []
-        for p in payments_qs:
-            fin_entry = p.financial_entry
-            if not fin_entry:
-                continue
-
-            score = 0
-            if p.amount == tx.amount:
-                score += 70
-            else:
-                continue
-
-            score += _compute_payment_match_score(p, fin_entry, tx)
-            if score > 0:
-                best.append((score, p, fin_entry))
-
-        best.sort(key=lambda x: x[0], reverse=True)
-        if best:
-            score, p, fin_entry = best[0]
-            # B7 FIX: Update existing PROPOSED reconciliation instead of creating a new one
-            rec = Reconciliation.objects.filter(
-                bank_transaction=tx, status=Reconciliation.PROPOSED
-            ).first()
-
-            if rec:
-                rec.payment = p
-                rec.financial_entry = fin_entry
-                rec.match_confidence = int(score)
-                rec.matched_concept = tx.concept or tx.description
-                rec.save(update_fields=["match_confidence", "matched_concept"])
-            else:
-                rec = Reconciliation.objects.create(
-                    bank_transaction=tx, payment=p, financial_entry=fin_entry,
-                    status=Reconciliation.PROPOSED, match_confidence=int(score),
-                    reconciliation_type="manual", matched_concept=tx.concept or tx.description,
-                )
-            reconciliations.append(rec)
-
-    return render(
-        request,
-        "tenant/bank_transactions_suggestions.html",
-        {
-            "statement": statement,
-            "transactions": txs,
-            "reconciliations": reconciliations,
-        },
-    )
-
-@login_required # B2 FIX: Removed duplicated function
-@tenant_required
-@module_enabled_required("finances")
-@tenant_group_required("Administrador de empresa", "Operador financiero")
-@require_POST
-def reconciliation_confirm(request, rec_id): # B2 FIX: Removed duplicated function
-    rec = Reconciliation.objects.filter(pk=rec_id).first()
-    if not rec:
-        messages.error(request, "Conciliación no encontrada.")
-        return redirect("dashboard")
-
-    form = ReconciliationConfirmForm(request.POST)
-    if not form.is_valid():
-        messages.error(request, "Datos inválidos.")
-        return redirect("bank_transaction_suggestions", statement_id=rec.bank_transaction.statement_id)
-
-    action = form.cleaned_data["action"]
-
-    if action == "reject":
-        rec.status = Reconciliation.REJECTED
-        rec.save(update_fields=["status"])
-        messages.success(request, "Rechazado.")
-        return redirect("bank_transaction_suggestions", statement_id=rec.bank_transaction.statement_id)
-
-    if rec.status != Reconciliation.CONFIRMED:
-        rec.status = Reconciliation.CONFIRMED
-        rec.matched_at = date.today()
-        rec.save(update_fields=["status", "matched_at"])
-
-    if not rec.payment and rec.financial_entry:
-        fin_entry = rec.financial_entry
-        bank_tx = rec.bank_transaction
-        with transaction.atomic():
-            payment_qs = Payment.objects.filter(
-                financial_entry=fin_entry,
-                payment_date=bank_tx.transaction_date,
-                amount=bank_tx.amount,
-                currency=bank_tx.currency,
-            )
-            payment = payment_qs.first()
-            if not payment:
-                payment = Payment.objects.create(
-                    financial_entry=fin_entry,
-                    payment_date=bank_tx.transaction_date,
-                    amount=bank_tx.amount,
-                    currency=bank_tx.currency,
-                    concept=bank_tx.description[:255] if bank_tx.description else "",
-                    created_by=request.user,
-                )
-            rec.payment = payment
-            rec.save(update_fields=["payment"])
-
-    messages.success(request, "Conciliación confirmada correctamente.")
-    return redirect("bank_transaction_suggestions", statement_id=rec.bank_transaction.statement_id)
-
-
-def _normalize_text(value: str) -> str:
-    if value is None:
-        return ""
-    return " ".join(str(value).strip().lower().split())
-
-
-def _parse_csv_date(value: str, *, statement_id: int | None = None, row_index: int | None = None):
-    """Intenta parsear fechas para import bancario.
-
-    - Soporta: YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY
-    - Nunca lanza excepción; retorna None si es inválida.
-    """
-    value = (value or "").strip()
-    if not value:
-        return None
-
-    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
-        try:
-            from datetime import datetime
-            return date.fromisoformat(value) if fmt == "%Y-%m-%d" else datetime.strptime(value, fmt).date()
-        except Exception:
-            continue
-
-    # logging mínimo (no usamos logger todavía): dejamos trazabilidad en consola
-    if statement_id is not None:
-        messages.warning(
-            None,
-            "Fecha inválida en import bancario; filas descartadas (statement_id=%s, row_index=%s)" % (statement_id, row_index),
-        )
-    return None
-
-
-
-def _compute_payment_match_score(payment: Payment, fin_entry: FinancialEntry, bank_tx: BankTransaction):
-    score = 0
-
-    # Fecha cercana (+)
-    delta_days = abs((payment.payment_date - bank_tx.transaction_date).days)
-    if delta_days == 0:
-        score += 50
-    elif delta_days <= 1:
-        score += 35
-    elif delta_days <= 3:
-        score += 20
-    elif delta_days <= 7:
-        score += 10
-
-    # Monto exacto (+) - MVP exige misma moneda, por lo que ya debería coincidir
-    if payment.currency == bank_tx.currency:
-        if payment.amount == bank_tx.amount:
-            score += 50
-        else:
-            # tolerancia decimal mínima
-            try:
-                diff = abs(payment.amount - bank_tx.amount)
-                if diff <= 0.01:
-                    score += 40
-            except Exception:
-                pass
-
-    # Concepto (+)
-    bank_concept = _normalize_text(bank_tx.concept or bank_tx.description)
-    pay_concept = _normalize_text(payment.concept or "")
-    fin_concept = _normalize_text(fin_entry.concept or "")
-    if bank_concept and (bank_concept == pay_concept or bank_concept in pay_concept or pay_concept in bank_concept):
-        score += 25
-    elif bank_concept and (bank_concept in fin_concept or fin_concept in bank_concept):
-        score += 15
-
-    return score
-
-
-def bank_statement_import_csv(request): # B2 FIX: Removed duplicated function
-    """
-    MVP:
-    - POST: sube CSV -> crea BankStatement y BankTransaction
-    - CSV header esperado (flexible por nombres):
-      date/fecha, amount/monto, currency/moneda, description/concept/detalle, external_id/reference/ref (opcional)
-    """
-    if request.method == "POST":
-        form = BankStatementImportCSVForm(request.POST, request.FILES)
-        if form.is_valid():
-            bank_account = form.cleaned_data["bank_account"]
-            uploaded = form.cleaned_data["file"]
-            delimiter = form.cleaned_data["delimiter"]
-            has_header = form.cleaned_data["has_header"]
-            statement_name = form.cleaned_data["statement_name"] or f"Statement {date.today().isoformat()}"
-
-            statement = BankStatement.objects.create(
-                bank_account=bank_account,
-                statement_date_from=None,
-                statement_date_to=None,
-                source="csv",
-                imported_file=uploaded,
-                created_by=request.user,
-            )
-
-            import io
-            import csv as csv_lib
-
-            # Intento de decodificación UTF-8 con fallback latin-1
-            raw = uploaded.read()
-            try:
-                text = raw.decode("utf-8")
-            except Exception:
-                text = raw.decode("latin-1")
-            uploaded.seek(0)  # no siempre necesario, pero mantenemos
-
-            f = io.StringIO(text)
-            if has_header:
-                reader = csv_lib.DictReader(f, delimiter=delimiter)
-                for row in reader:
-                    # columnas flexibles
-                    date_val = row.get("date") or row.get("fecha")
-                    amount_val = row.get("amount") or row.get("monto")
-                    currency_val = row.get("currency") or row.get("moneda") or bank_account.base_currency
-                    desc_val = (
-                        row.get("description")
-                        or row.get("concept")
-                        or row.get("detalle")
-                        or ""
-                    )
-                    external_id = row.get("external_id") or row.get("reference") or row.get("ref") or ""
-
-                    tx_date = _parse_csv_date(date_val)
-                    if not tx_date:
-                        continue
-
-                    try:
-                        amount_dec = Decimal(str(amount_val).replace(",", "."))
-                    except Exception:
-                        continue
-
-                    currency = (currency_val or bank_account.base_currency).strip().upper()
-
-                    BankTransaction.objects.create(
-                        statement=statement,
-                        transaction_date=tx_date,
-                        description=desc_val[:255],
-                        concept=_normalize_text(desc_val)[:255],
-                        amount=amount_dec,
-                        currency=currency,
-                        external_id=external_id[:120],
-                        direction="in" if amount_dec > 0 else "out", # Populate direction field
-                        status=BankTransaction.IMPORTED,
-                    )
-            else:
-                # Sin header: no soportado en MVP (evitamos ambigüedad)
-                messages.error(request, "CSV sin encabezado no soportado en este MVP. Agrega header.")
-                statement.delete()
-                return redirect("bank_statement_import_csv")
-
-            messages.success(request, f"Extracto importado: {statement_name}.")
-            return redirect("bank_transaction_suggestions", statement_id=statement.pk)
-
-    else:
-        form = BankStatementImportCSVForm()
-
-    return render(
-        request,
-        "tenant/bank_statement_import.html",
-        {"form": form, "page_title": "Importar extracto CSV"},
-    )
-
-def bank_transaction_suggestions(request, statement_id): # B2 FIX: Removed duplicated function
-    statement = BankStatement.objects.filter(pk=statement_id).first()
-    if not statement:
-        messages.error(request, "Extracto no encontrado.")
-        return redirect("dashboard")
-
-    # Necesitamos candidates por payment para el tenant
-    txs = statement.transactions.all().order_by("transaction_date", "created_at")
-
-    reconciliations = []
-    # Generamos propuestas por transacción vs pagos en ventana ±3 días y misma currency
-    for tx in txs:
-        from_date = tx.transaction_date - timedelta(days=3)
-        to_date = tx.transaction_date + timedelta(days=3)
-
-        payments_qs = (
-            Payment.objects.select_related("financial_entry", "created_by")
-            .filter(
-                payment_date__gte=from_date,
-                payment_date__lte=to_date,
-                currency=tx.currency,
-            )
-        )
-
-        best = []
-        for p in payments_qs:
-            fin_entry = p.financial_entry
-            if not fin_entry:
-                continue
-
-            score = 0
-            # MVP: monto exacto en misma currency
-            if p.amount == tx.amount:
-                score += 70
-            else:
-                continue
-
-            score += _compute_payment_match_score(p, fin_entry, tx)
-            if score > 0:
-                best.append((score, p, fin_entry))
-
-        best.sort(key=lambda x: x[0], reverse=True)
-        if best:
-            score, p, fin_entry = best[0]
-            rec, _created = Reconciliation.objects.get_or_create(
-                bank_transaction=tx,
-                payment=p,
-                financial_entry=fin_entry,
-                status=Reconciliation.PROPOSED,
-                defaults={
-                    "match_confidence": int(score),
-                    "reconciliation_type": "manual",
-                    "matched_concept": tx.concept or tx.description,
-                },
-            )
-            if not _created:
-                # actualizamos confidence si aplica
-                rec.match_confidence = int(score)
-                rec.matched_concept = tx.concept or tx.description
-                rec.save(update_fields=["match_confidence", "matched_concept"])
-            reconciliations.append(rec)
-
-    return render(
-        request,
-        "tenant/bank_transactions_suggestions.html",
-        {
-            "statement": statement,
-            "transactions": txs,
-            "reconciliations": reconciliations,
-        },
-    )
-
-def reconciliation_confirm(request, rec_id): # B2 FIX: Removed duplicated function
-    rec = Reconciliation.objects.filter(pk=rec_id).first()
-    if not rec:
-        messages.error(request, "Conciliación no encontrada.")
-        return redirect("dashboard")
-
-    form = ReconciliationConfirmForm(request.POST)
-    if not form.is_valid():
-        messages.error(request, "Datos inválidos.")
-        return redirect(
-            "bank_transaction_suggestions",
-            statement_id=rec.bank_transaction.statement_id,
-        )
-
-    action = form.cleaned_data["action"]
-
-    if action == "reject":
-        rec.status = Reconciliation.REJECTED
-        rec.save(update_fields=["status"])
-        messages.success(request, "Rechazado.")
-        return redirect(
-            "bank_transaction_suggestions",
-            statement_id=rec.bank_transaction.statement_id,
-        )
-
-    # confirm
-    if rec.status != Reconciliation.CONFIRMED:
-        rec.status = Reconciliation.CONFIRMED
-        rec.matched_at = date.today()
-        rec.save(update_fields=["status", "matched_at"]) # Removed updated_at as it's auto_now
-
-    # MVP: crear Payment si falta (según decisión previa)
-    if not rec.payment and rec.financial_entry:
-        fin_entry = rec.financial_entry
-        # crea payment en moneda y fecha del banco, usando monto del tx
-        bank_tx = rec.bank_transaction
-        with transaction.atomic():
-            payment_qs = Payment.objects.filter(
-                financial_entry=fin_entry,
-                payment_date=bank_tx.transaction_date,
-                amount=bank_tx.amount,
-                currency=bank_tx.currency,
-            )
-            payment = payment_qs.first()
-            if not payment:
-                payment = Payment.objects.create(
-                    financial_entry=fin_entry,
-                    payment_date=bank_tx.transaction_date,
-                    amount=bank_tx.amount,
-                    currency=bank_tx.currency,
-                    concept=bank_tx.description[:255] if bank_tx.description else "",
-                    created_by=request.user,
-                )
-            rec.payment = payment
-            rec.save(update_fields=["payment"])
-
-    messages.success(request, "Conciliación confirmada correctamente.")
-    return redirect(
-        "bank_transaction_suggestions", statement_id=rec.bank_transaction.statement_id
-    )
-
 
 @login_required
 @tenant_required
 @tenant_group_required("Administrador de empresa", "Operador financiero")
-@module_enabled_required("finances")
+@module_enabled_required("banking")
 def bank_account_list(request):
     accounts = BankAccount.objects.select_related("business").all().order_by("name")
     return render(
@@ -4353,7 +3850,7 @@ def bank_account_list(request):
 @login_required
 @tenant_required
 @tenant_group_required("Administrador de empresa", "Operador financiero")
-@module_enabled_required("finances")
+@module_enabled_required("banking")
 def bank_account_create(request):
     business = Business.objects.first()
     if business is None:
@@ -4396,7 +3893,7 @@ def bank_account_create(request):
 @login_required
 @tenant_required
 @tenant_group_required("Administrador de empresa", "Operador financiero")
-@module_enabled_required("finances")
+@module_enabled_required("banking")
 def bank_account_edit(request, account_id):
     bank_account = BankAccount.objects.filter(pk=account_id).first()
     if bank_account is None:
@@ -4820,3 +4317,55 @@ def credit_note_pdf(request, credit_note_id):
         f'attachment; filename="credit_note_{credit_note.credit_note_number}.pdf"'
     )
     return response
+
+@login_required
+@tenant_required
+@module_enabled_required("banking")
+def bank_statement_list(request):
+    """Lista de extractos bancarios importados."""
+    statements = BankStatement.objects.select_related("bank_account").all().order_by("-imported_at")
+    return render(
+        request,
+        "tenant/bank_statement_list.html",
+        {"statements": statements, "page_title": "Extractos Bancarios"},
+    )
+
+
+@login_required
+@tenant_required
+@module_enabled_required("banking")
+def reconciliation_list(request):
+    """Dashboard de conciliaciones entre extractos y movimientos."""
+    from tenantdata.models import Reconciliation
+    
+    confirmed = Reconciliation.objects.select_related("bank_transaction").filter(
+        status=Reconciliation.CONFIRMED
+    ).order_by("-matched_at", "-id")[:20]
+    proposed = Reconciliation.objects.select_related("bank_transaction").filter(
+        status=Reconciliation.PROPOSED
+    ).order_by("-created_at")
+    rejected = Reconciliation.objects.select_related("bank_transaction").filter(
+        status=Reconciliation.REJECTED
+    ).order_by("-id")[:20]
+    
+    total_confirmed = sum(
+        (r.bank_transaction.amount for r in confirmed if r.bank_transaction),
+        Decimal("0.00"),
+    )
+    total_proposed = sum(
+        (r.bank_transaction.amount for r in proposed if r.bank_transaction),
+        Decimal("0.00"),
+    )
+    
+    return render(
+        request,
+        "tenant/reconciliation_list.html",
+        {
+            "confirmed": confirmed,
+            "proposed": proposed,
+            "rejected": rejected,
+            "total_confirmed": total_confirmed,
+            "total_proposed": total_proposed,
+            "page_title": "Conciliación Bancaria",
+        },
+    )

@@ -1,0 +1,137 @@
+{% extends "tenant/base.html" %}
+{% load i18n %}
+
+{% block workspace_content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>{{ page_title|default:"Conciliación Bancaria" }}</h2>
+    </div>
+
+    {% if proposed %}
+    <div class="alert alert-warning mb-4">
+        <i class="bi bi-exclamation-triangle"></i> 
+        Hay <strong>{{ proposed.count }}</strong> conciliaciones pendientes por confirmar 
+        (Total: <strong>{{ total_proposed|floatformat:2 }}</strong>)
+    </div>
+    {% endif %}
+
+    {# Proposed Reconciliations #}
+    {% if proposed %}
+    <div class="card mb-4">
+        <div class="card-header bg-warning">
+            <h5 class="mb-0"><i class="bi bi-clock"></i> Pendientes de Confirmar</h5>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>Fecha</th>
+                            <th>Concepto</th>
+                            <th>Monto</th>
+                            <th>Coincidencia</th>
+                            <th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for rec in proposed %}
+                        <tr>
+                            <td>{{ rec.created_at|date:"d/m/Y" }}</td>
+                            <td>{{ rec.matched_concept|truncatechars:30 }}</td>
+                            <td>{{ rec.bank_transaction.amount|floatformat:2 }} {{ rec.bank_transaction.currency }}</td>
+                            <td>
+                                <span class="badge bg-{% if rec.match_confidence >= 80 %}success{% elif rec.match_confidence >= 50 %}warning{% else %}danger{% endif %}">
+                                    {{ rec.match_confidence }}%
+                                </span>
+                            </td>
+                            <td>
+                                <form method="post" action="{% url 'reconciliation_confirm' rec.id %}" class="d-inline">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="reconciliation_id" value="{{ rec.id }}">
+                                    <input type="hidden" name="action" value="confirm">
+                                    <button class="btn btn-sm btn-success" title="Confirmar"><i class="bi bi-check-lg"></i></button>
+                                </form>
+                                <form method="post" action="{% url 'reconciliation_confirm' rec.id %}" class="d-inline">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="reconciliation_id" value="{{ rec.id }}">
+                                    <input type="hidden" name="action" value="reject">
+                                    <button class="btn btn-sm btn-danger" title="Rechazar"><i class="bi bi-x-lg"></i></button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {# Confirmed Reconciliations #}
+    <div class="card mb-4">
+        <div class="card-header bg-success text-white">
+            <h5 class="mb-0"><i class="bi bi-check-circle"></i> Conciliadas</h5>
+        </div>
+        <div class="card-body">
+            {% if confirmed %}
+            <div class="table-responsive">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>Fecha</th>
+                            <th>Concepto</th>
+                            <th>Monto</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for rec in confirmed %}
+                        <tr>
+                            <td>{{ rec.matched_at|date:"d/m/Y" }}</td>
+                            <td>{{ rec.matched_concept|truncatechars:40 }}</td>
+                            <td>{{ rec.bank_transaction.amount|floatformat:2 }} {{ rec.bank_transaction.currency }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div class="mt-2 text-end">
+                <strong>Totalconciliado: {{ total_confirmed|floatformat:2 }}</strong>
+            </div>
+            {% else %}
+            <p class="text-muted">No hay conciliaciones confirmadas.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    {# Rejected Reconciliations #}
+    {% if rejected %}
+    <div class="card">
+        <div class="card-header bg-danger text-white">
+            <h5 class="mb-0"><i class="bi bi-x-circle"></i> Rechazadas</h5>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>Fecha</th>
+                            <th>Concepto</th>
+                            <th>Monto</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for rec in rejected %}
+                        <tr>
+                            <td>{{ rec.matched_at|date:"d/m/Y" }}</td>
+                            <td>{{ rec.matched_concept|truncatechars:40 }}</td>
+                            <td>{{ rec.bank_transaction.amount|floatformat:2 }} {{ rec.bank_transaction.currency }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

@@ -124,7 +124,7 @@ def _compute_payment_match_score(payment: Payment, fin_entry: FinancialEntry, ba
 
 @login_required
 @tenant_required
-@module_enabled_required("finances")
+@module_enabled_required("banking")
 @tenant_group_required("Administrador de empresa", "Operador financiero")
 def bank_statement_import_csv(request):
     if request.method != "POST":
@@ -208,18 +208,21 @@ def bank_statement_import_csv(request):
             amount_dec = Decimal(str(amount_val).replace(",", "."))
         except Exception:
             continue
+        if amount_dec == 0:
+            continue
 
         currency = (currency_val or bank_account.base_currency).strip().upper()
+        direction = "in" if amount_dec > 0 else "out"
 
         BankTransaction.objects.create(
             statement=statement,
             transaction_date=tx_date,
             description=(desc_val[:255] if desc_val else ""),
             concept=_normalize_text(desc_val)[:255],
-            amount=amount_dec,
+            amount=abs(amount_dec),
             currency=currency,
             external_id=external_id[:120],
-            direction="",
+            direction=direction,
             status=BankTransaction.IMPORTED,
         )
 
@@ -229,7 +232,7 @@ def bank_statement_import_csv(request):
 
 @login_required
 @tenant_required
-@module_enabled_required("finances")
+@module_enabled_required("banking")
 @tenant_group_required("Administrador de empresa", "Operador financiero")
 def bank_transaction_suggestions(request, statement_id: int):
     statement = BankStatement.objects.filter(pk=statement_id).first()
@@ -271,21 +274,28 @@ def bank_transaction_suggestions(request, statement_id: int):
         best.sort(key=lambda x: x[0], reverse=True)
         if best:
             score, p, fin_entry = best[0]
-            rec, created = Reconciliation.objects.get_or_create(
-                bank_transaction=tx,
-                payment=p,
-                financial_entry=fin_entry,
-                status=Reconciliation.PROPOSED,
-                defaults={
-                    "match_confidence": int(score),
-                    "reconciliation_type": "manual",
-                    "matched_concept": tx.concept or tx.description,
-                },
-            )
-            if not created:
+            rec = Reconciliation.objects.filter(
+                bank_transaction=tx, status=Reconciliation.PROPOSED
+            ).first()
+            if rec:
+                rec.payment = p
+                rec.financial_entry = fin_entry
                 rec.match_confidence = int(score)
                 rec.matched_concept = tx.concept or tx.description
-                rec.save(update_fields=["match_confidence", "matched_concept"])
+                rec.save(update_fields=[
+                    "payment", "financial_entry", "match_confidence",
+                    "matched_concept",
+                ])
+            else:
+                rec = Reconciliation.objects.create(
+                    bank_transaction=tx,
+                    payment=p,
+                    financial_entry=fin_entry,
+                    status=Reconciliation.PROPOSED,
+                    match_confidence=int(score),
+                    reconciliation_type="manual",
+                    matched_concept=tx.concept or tx.description,
+                )
             reconciliations.append(rec)
 
     return render(
@@ -301,7 +311,7 @@ def bank_transaction_suggestions(request, statement_id: int):
 
 @login_required
 @tenant_required
-@module_enabled_required("finances")
+@module_enabled_required("banking")
 @tenant_group_required("Administrador de empresa", "Operador financiero")
 def reconciliation_confirm(request, rec_id: int):
     rec = Reconciliation.objects.filter(pk=rec_id).first()
@@ -361,4 +371,3 @@ def reconciliation_confirm(request, rec_id: int):
         "bank_transaction_suggestions",
         statement_id=rec.bank_transaction.statement_id,
     )
-

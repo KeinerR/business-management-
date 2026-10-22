@@ -118,6 +118,8 @@ urlpatterns = [
         __import__("businessmanagement.services.banking", fromlist=["reconciliation_confirm"]).reconciliation_confirm,
         name="reconciliation_confirm",
     ),
+    path("bank/statements/", views.bank_statement_list, name="bank_statement_list"),
+    path("bank/reconciliations/", views.reconciliation_list, name="reconciliation_list"),
 
     path("projects/", views.project_list, name="project_list"),
     path("projects/create/", views.project_create, name="project_create"),
