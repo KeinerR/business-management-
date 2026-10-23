@@ -25,6 +25,9 @@ from tenantdata.models import (
     ImportedRecord,
     BankAccount,
     Quote,
+    ApprovalRequest,
+    Account,
+    Document,
     # Nota: DebitNote debe existir en tenantdata.models, pero si el import falla
     # (por dependencia circular en runtime) evitamos que el NameError derribe el worker.
     DebitNote,
@@ -35,6 +38,16 @@ from django.forms import inlineformset_factory
 
 from .models import Domain, Tenant
 from .modules import AVAILABLE_MODULES, MODULES_INDIVIDUAL, MODULES_BUSINESS
+
+
+def sync_tenant_service_state(cleaned_data):
+    service_status = cleaned_data.get("service_status")
+    is_active = cleaned_data.get("is_active")
+    if service_status == Tenant.SERVICE_SUSPENDED:
+        cleaned_data["is_active"] = False
+    elif not is_active and service_status in (Tenant.SERVICE_ACTIVE, Tenant.SERVICE_TRIAL):
+        cleaned_data["service_status"] = Tenant.SERVICE_SUSPENDED
+    return cleaned_data
 
 
 class TwoDecimalNumberInput(forms.NumberInput):
@@ -82,7 +95,17 @@ class PlatformTenantCreateForm(forms.ModelForm):
 
     class Meta:
         model = Tenant
-        fields = ("name", "schema_name", "tenant_type", "enabled_modules", "is_active")
+        fields = (
+            "name",
+            "schema_name",
+            "tenant_type",
+            "enabled_modules",
+            "is_active",
+            "service_plan",
+            "service_status",
+            "renewal_date",
+            "platform_notes",
+        )
         labels = {
             "name": "Nombre del tenant / Razón Social",
             "schema_name": "Schema",
@@ -100,6 +123,12 @@ class PlatformTenantCreateForm(forms.ModelForm):
         self.fields["description"].widget.attrs.update({"rows": 3})
         self.fields["admin_password"].widget.attrs.update(
             {"autocomplete": "new-password"}
+        )
+        self.fields["renewal_date"].widget = forms.DateInput(
+            attrs={"class": "form-control", "type": "date"}
+        )
+        self.fields["platform_notes"].widget.attrs.update(
+            {"class": "form-control", "rows": 3}
         )
 
     def clean(self):
@@ -138,7 +167,7 @@ class PlatformTenantCreateForm(forms.ModelForm):
             if not cleaned_data.get("business_address"):
                 cleaned_data["business_address"] = "Dirección Personal"
 
-        return cleaned_data
+        return sync_tenant_service_state(cleaned_data)
 
 
 class PlatformTenantEditForm(forms.ModelForm):
@@ -156,7 +185,15 @@ class PlatformTenantEditForm(forms.ModelForm):
 
     class Meta:
         model = Tenant
-        fields = ("name", "is_active", "enabled_modules")
+        fields = (
+            "name",
+            "is_active",
+            "enabled_modules",
+            "service_plan",
+            "service_status",
+            "renewal_date",
+            "platform_notes",
+        )
         labels = {
             "name": "Nombre del tenant",
             "is_active": "Activo",
@@ -173,6 +210,12 @@ class PlatformTenantEditForm(forms.ModelForm):
             if field_name in ("enabled_modules", "is_active"):
                 continue
             field.widget.attrs.update({"class": "form-control", "autocomplete": "off"})
+        self.fields["renewal_date"].widget = forms.DateInput(
+            attrs={"class": "form-control", "type": "date"}
+        )
+        self.fields["platform_notes"].widget.attrs.update(
+            {"class": "form-control", "rows": 3}
+        )
 
     def clean_domain(self):
         domain = self.cleaned_data["domain"].strip().lower()
@@ -181,6 +224,9 @@ class PlatformTenantEditForm(forms.ModelForm):
         if Domain.objects.filter(domain=domain).exclude(tenant=self.instance).exists():
             raise forms.ValidationError("Ya existe un tenant con este dominio.")
         return domain
+
+    def clean(self):
+        return sync_tenant_service_state(super().clean())
 
 
 class EmployeeCreateForm(forms.Form):
@@ -359,6 +405,14 @@ class BudgetForm(forms.ModelForm):
         for field in self.fields.values():
             field.widget.attrs.update({"class": "form-control", "autocomplete": "off"})
 
+    def clean(self):
+        cleaned = super().clean()
+        start = cleaned.get("period_start_date")
+        end = cleaned.get("period_end_date")
+        if start and end and end < start:
+            self.add_error("period_end_date", "La fecha final no puede ser anterior a la inicial.")
+        return cleaned
+
 
 class BudgetLineForm(forms.ModelForm):
     class Meta:
@@ -379,20 +433,16 @@ class BudgetLineForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         self.fields["category"].queryset = FinancialCategory.objects.filter(is_active=True).order_by("name")
         self.fields["project"].queryset = Project.objects.all().order_by("name")
-        self.fields["tax_rules"] = forms.ModelMultipleChoiceField(
-            queryset=TaxRule.objects.filter(
-                business=Business.objects.first(), is_active=True
-            ).order_by("name"),
-            required=False,
-            widget=forms.CheckboxSelectMultiple,
-            label="Reglas Tributarias",
-        )
-        if self.instance and self.instance.pk:
-            self.fields["tax_rules"].initial = self.instance.tax_rules.all()
         self.fields["category"].required = False
         self.fields["project"].required = False
         for field in self.fields.values():
             field.widget.attrs.update({"class": "form-control", "autocomplete": "off"})
+
+    def clean_budgeted_amount(self):
+        amount = self.cleaned_data["budgeted_amount"]
+        if amount <= 0:
+            raise ValidationError("El monto presupuestado debe ser mayor que cero.")
+        return amount
 
 
 BudgetLineFormSet = inlineformset_factory(
@@ -436,6 +486,20 @@ class GenericImportUploadForm(forms.Form):
                 field.widget.attrs.update({"class": "form-check-input"})
             else:
                 field.widget.attrs.update({"class": "form-control"})
+
+    def clean_file(self):
+        uploaded = self.cleaned_data["file"]
+        extension = uploaded.name.lower().rsplit(".", 1)[-1] if "." in uploaded.name else ""
+        if extension not in {"csv", "xlsx"}:
+            raise ValidationError("Use un archivo CSV o Excel .xlsx.")
+        if uploaded.size > 10 * 1024 * 1024:
+            raise ValidationError("El archivo supera el máximo de 10 MB.")
+        return uploaded
+
+    def clean_has_header(self):
+        if not self.cleaned_data.get("has_header"):
+            raise ValidationError("La primera fila debe contener los nombres de las columnas.")
+        return True
 
 
 
@@ -572,15 +636,18 @@ class ProjectForm(forms.ModelForm):
 class FinancialCategoryForm(forms.ModelForm):
     class Meta:
         model = FinancialCategory
-        fields = ("name", "category_type", "is_active")
+        fields = ("name", "category_type", "account", "is_active")
         labels = {
             "name": "Nombre de la categoría",
             "category_type": "Tipo",
+            "account": "Cuenta contable",
             "is_active": "Activa",
         }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.fields["account"].queryset = Account.objects.filter(is_active=True, accepts_entries=True).order_by("code")
+        self.fields["account"].required = False
         for field_name, field in self.fields.items():
             if field_name == "is_active":
                 field.widget.attrs.update({"class": "form-check-input"})
@@ -590,6 +657,34 @@ class FinancialCategoryForm(forms.ModelForm):
                 )
 
 
+class AccountForm(forms.ModelForm):
+    class Meta:
+        model = Account
+        fields = ("code", "name", "account_type", "nature", "parent", "accepts_entries", "is_active", "description")
+        labels = {
+            "code": "Código PUC",
+            "name": "Nombre",
+            "account_type": "Tipo",
+            "nature": "Naturaleza",
+            "parent": "Cuenta padre",
+            "accepts_entries": "Permite movimientos",
+            "is_active": "Activa",
+            "description": "Descripción",
+        }
+        widgets = {"description": forms.Textarea(attrs={"rows": 3})}
+
+    def __init__(self, *args, **kwargs):
+        business = kwargs.pop("business")
+        super().__init__(*args, **kwargs)
+        self.instance.business = business
+        self.fields["parent"].queryset = Account.objects.filter(
+            business=business, accepts_entries=False, is_active=True
+        ).exclude(pk=self.instance.pk).order_by("code")
+        self.fields["parent"].required = False
+        for name, field in self.fields.items():
+            field.widget.attrs["class"] = "form-check-input" if name in ("accepts_entries", "is_active") else "form-control"
+
+
 class InvoiceForm(forms.ModelForm):
     class Meta:
         model = Invoice
@@ -597,7 +692,6 @@ class InvoiceForm(forms.ModelForm):
             "invoice_number",
             "project",
             "third_party",
-            "status",
             "issue_date",
             "due_date",
             "currency",
@@ -608,7 +702,6 @@ class InvoiceForm(forms.ModelForm):
             "invoice_number": "Número de factura",
             "project": "Proyecto",
             "third_party": "Cliente/Proveedor",
-            "status": "Estado",
             "issue_date": "Fecha de emisión",
             "due_date": "Fecha de vencimiento",
             "currency": "Moneda",
@@ -641,6 +734,17 @@ class InvoiceForm(forms.ModelForm):
         for field_name, field in self.fields.items():
             field.widget.attrs.update({"class": "form-control"})
 
+        self.fields["tax_rules"] = forms.ModelMultipleChoiceField(
+            queryset=TaxRule.objects.filter(
+                business=Business.objects.first(), is_active=True
+            ).order_by("name"),
+            required=False,
+            widget=forms.CheckboxSelectMultiple,
+            label="Reglas tributarias",
+        )
+        if self.instance and self.instance.pk:
+            self.fields["tax_rules"].initial = self.instance.tax_rules.all()
+
     def clean(self):
         cleaned_data = super().clean()
         issue_date = cleaned_data.get("issue_date")
@@ -660,7 +764,6 @@ class QuoteForm(forms.ModelForm):
             "quote_number",
             "project",
             "third_party",
-            "status",
             "issue_date",
             "due_date",
             "currency",
@@ -671,7 +774,6 @@ class QuoteForm(forms.ModelForm):
             "quote_number": "Número de cotización",
             "project": "Proyecto",
             "third_party": "Cliente/Proveedor",
-            "status": "Estado",
             "issue_date": "Fecha de emisión",
             "due_date": "Fecha de vencimiento",
             "currency": "Moneda",
@@ -938,6 +1040,66 @@ class PaymentForm(forms.ModelForm):
         return amount
 
 
+class ApprovalRequestForm(forms.Form):
+    reason = forms.CharField(
+        label="Justificación",
+        required=False,
+        widget=forms.Textarea(attrs={"rows": 3, "class": "form-control"}),
+    )
+
+
+ALLOWED_DOCUMENT_EXTENSIONS = {"pdf", "png", "jpg", "jpeg", "xlsx", "xls", "docx", "doc", "txt", "csv"}
+MAX_DOCUMENT_SIZE = 10 * 1024 * 1024
+
+
+def validate_document_file(uploaded):
+    extension = uploaded.name.lower().rsplit(".", 1)[-1] if "." in uploaded.name else ""
+    if extension not in ALLOWED_DOCUMENT_EXTENSIONS:
+        raise ValidationError("Formato no permitido. Use PDF, imagen, Office, TXT o CSV.")
+    if uploaded.size > MAX_DOCUMENT_SIZE:
+        raise ValidationError("El archivo supera el máximo permitido de 10 MB.")
+    return uploaded
+
+
+class DocumentCreateForm(forms.ModelForm):
+    file = forms.FileField(label="Archivo", validators=[validate_document_file])
+    version_notes = forms.CharField(label="Notas de la versión", required=False, widget=forms.Textarea(attrs={"rows": 2}))
+
+    class Meta:
+        model = Document
+        fields = ("title", "document_type", "description", "tags", "entity_type", "entity_id")
+        labels = {"title": "Título", "document_type": "Tipo", "description": "Descripción", "tags": "Etiquetas", "entity_type": "Tipo de registro relacionado", "entity_id": "ID relacionado"}
+        widgets = {"description": forms.Textarea(attrs={"rows": 3})}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for field in self.fields.values():
+            field.widget.attrs.setdefault("class", "form-control")
+
+
+class DocumentVersionForm(forms.Form):
+    file = forms.FileField(label="Nueva versión", validators=[validate_document_file], widget=forms.ClearableFileInput(attrs={"class": "form-control"}))
+    notes = forms.CharField(label="Cambios realizados", required=False, widget=forms.Textarea(attrs={"rows": 2, "class": "form-control"}))
+
+
+class ApprovalDecisionForm(forms.Form):
+    action = forms.ChoiceField(
+        choices=((ApprovalRequest.APPROVED, "Aprobar"), (ApprovalRequest.REJECTED, "Rechazar")),
+        widget=forms.HiddenInput(),
+    )
+    decision_notes = forms.CharField(
+        label="Observaciones de la decisión",
+        required=False,
+        widget=forms.Textarea(attrs={"rows": 3, "class": "form-control"}),
+    )
+
+    def clean(self):
+        cleaned = super().clean()
+        if cleaned.get("action") == ApprovalRequest.REJECTED and not cleaned.get("decision_notes", "").strip():
+            self.add_error("decision_notes", "Explique el motivo del rechazo.")
+        return cleaned
+
+
 class BankStatementImportCSVForm(forms.Form):
     statement_name = forms.CharField(
         label="Nombre / referencia (opcional)", required=False
@@ -947,7 +1109,7 @@ class BankStatementImportCSVForm(forms.Form):
         queryset=None,
         required=True,
     )
-    file = forms.FileField(label="Archivo CSV")
+    file = forms.FileField(label="Archivo CSV o Excel")
     delimiter = forms.ChoiceField(
         label="Separador",
         choices=((",", "Coma (, )"), (";", "Punto y coma (;)")),
@@ -965,6 +1127,41 @@ class BankStatementImportCSVForm(forms.Form):
         self.fields["bank_account"].queryset = BankAccount.objects.all().order_by(
             "name"
         )
+
+    def clean_file(self):
+        uploaded = self.cleaned_data["file"]
+        extension = uploaded.name.lower().rsplit(".", 1)[-1]
+        if extension not in {"csv", "xlsx"}:
+            raise ValidationError("Use un archivo CSV o Excel (.xlsx).")
+        return uploaded
+
+
+class ReconciliationManualForm(forms.Form):
+    payment = forms.ModelChoiceField(
+        queryset=Payment.objects.none(), required=False, label="Pago existente"
+    )
+    financial_entry = forms.ModelChoiceField(
+        queryset=FinancialEntry.objects.none(),
+        required=False,
+        label="Movimiento financiero",
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["payment"].queryset = Payment.objects.select_related(
+            "financial_entry"
+        ).order_by("-payment_date")
+        self.fields["financial_entry"].queryset = FinancialEntry.objects.filter(
+            status__in=[FinancialEntry.PENDING, FinancialEntry.PARTIAL]
+        ).order_by("-entry_date")
+        for field in self.fields.values():
+            field.widget.attrs["class"] = "form-select"
+
+    def clean(self):
+        cleaned = super().clean()
+        if not cleaned.get("payment") and not cleaned.get("financial_entry"):
+            raise ValidationError("Seleccione un pago o un movimiento financiero.")
+        return cleaned
 
 
 class ReconciliationConfirmForm(forms.Form):

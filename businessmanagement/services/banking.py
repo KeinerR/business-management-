@@ -12,6 +12,7 @@ from django.core.paginator import Paginator
 from django.db import transaction
 from django.http import HttpResponse
 from django.shortcuts import redirect, render
+from django.utils import timezone
 from django_tenants.utils import schema_context
 
 from tenantdata.models import (
@@ -27,6 +28,7 @@ from tenantdata.models import (
 )
 
 from businessmanagement.views import (
+    _sync_payment_status,
     module_enabled_required,
     tenant_group_required,
     tenant_required,
@@ -35,7 +37,9 @@ from businessmanagement.views import (
 from businessmanagement.forms import (
     BankStatementImportCSVForm,
     ReconciliationConfirmForm,
+    ReconciliationManualForm,
 )
+from businessmanagement.services.imports import read_import_rows
 
 
 def _normalize_text(value: str | None) -> str:
@@ -122,6 +126,11 @@ def _compute_payment_match_score(payment: Payment, fin_entry: FinancialEntry, ba
     return score
 
 
+def _rows_from_uploaded_file(uploaded, delimiter=","):
+    """Usa el mismo lector seguro CSV/XLSX del pipeline genérico."""
+    return read_import_rows(uploaded, delimiter)
+
+
 @login_required
 @tenant_required
 @module_enabled_required("banking")
@@ -132,7 +141,7 @@ def bank_statement_import_csv(request):
         return render(
             request,
             "tenant/bank_statement_import.html",
-            {"form": form, "page_title": "Importar extracto CSV"},
+            {"form": form, "page_title": "Importar extracto bancario"},
         )
 
     form = BankStatementImportCSVForm(request.POST, request.FILES)
@@ -149,27 +158,17 @@ def bank_statement_import_csv(request):
     has_header = form.cleaned_data["has_header"]
     statement_name = form.cleaned_data["statement_name"] or f"Statement {date.today().isoformat()}"
 
+    extension = uploaded.name.lower().rsplit(".", 1)[-1]
     statement = BankStatement.objects.create(
         bank_account=bank_account,
         statement_date_from=None,
         statement_date_to=None,
-        source="csv",
+        source=extension,
         imported_file=uploaded,
         created_by=request.user,
     )
 
-    # decode
-    raw = uploaded.read()
-    try:
-        text = raw.decode("utf-8")
-    except Exception:
-        text = raw.decode("latin-1")
-
-    import io
-    import csv as csv_lib
-
-    f = io.StringIO(text)
-    if not has_header:
+    if extension == "csv" and not has_header:
         messages.error(
             request,
             "CSV sin encabezado no soportado en este MVP. Agrega header.",
@@ -177,9 +176,17 @@ def bank_statement_import_csv(request):
         statement.delete()
         return redirect("bank_statement_import_csv")
 
-    reader = csv_lib.DictReader(f, delimiter=delimiter)
+    try:
+        rows = _rows_from_uploaded_file(uploaded, delimiter)
+    except Exception as exc:
+        statement.delete()
+        messages.error(request, f"No fue posible leer el archivo: {exc}")
+        return redirect("bank_statement_import_csv")
 
-    for idx, row in enumerate(reader, start=1):
+    imported_count = 0
+    discarded_count = 0
+    imported_dates = []
+    for idx, row in enumerate(rows, start=1):
         date_val = row.get("date") or row.get("fecha")
         amount_val = row.get("amount") or row.get("monto")
         currency_val = (
@@ -189,26 +196,32 @@ def bank_statement_import_csv(request):
         )
         desc_val = (
             row.get("description")
+            or row.get("descripcion")
             or row.get("concept")
+            or row.get("concepto")
             or row.get("detalle")
             or ""
         )
         external_id = (
             row.get("external_id")
             or row.get("reference")
+            or row.get("referencia")
             or row.get("ref")
             or ""
         )
 
         tx_date = _parse_csv_date(date_val, statement_id=statement.pk, row_index=idx)
         if not tx_date:
+            discarded_count += 1
             continue
 
         try:
             amount_dec = Decimal(str(amount_val).replace(",", "."))
         except Exception:
+            discarded_count += 1
             continue
         if amount_dec == 0:
+            discarded_count += 1
             continue
 
         currency = (currency_val or bank_account.base_currency).strip().upper()
@@ -225,8 +238,19 @@ def bank_statement_import_csv(request):
             direction=direction,
             status=BankTransaction.IMPORTED,
         )
+        imported_count += 1
+        imported_dates.append(tx_date)
 
-    messages.success(request, f"Extracto importado: {statement_name}.")
+    if imported_dates:
+        statement.statement_date_from = min(imported_dates)
+        statement.statement_date_to = max(imported_dates)
+        statement.save(update_fields=["statement_date_from", "statement_date_to"])
+
+    messages.success(
+        request,
+        f"Extracto {statement_name}: {imported_count} transacciones importadas, "
+        f"{discarded_count} filas descartadas.",
+    )
     return redirect("bank_transaction_suggestions", statement_id=statement.pk)
 
 
@@ -298,6 +322,21 @@ def bank_transaction_suggestions(request, statement_id: int):
                 )
             reconciliations.append(rec)
 
+    reconciliation_map = {
+        rec.bank_transaction_id: rec
+        for rec in Reconciliation.objects.filter(bank_transaction__statement=statement)
+        .exclude(status=Reconciliation.REJECTED)
+        .select_related("payment", "financial_entry")
+    }
+    transaction_rows = [
+        {
+            "transaction": tx,
+            "reconciliation": reconciliation_map.get(tx.pk),
+            "manual_form": ReconciliationManualForm(prefix=f"tx-{tx.pk}"),
+        }
+        for tx in txs
+    ]
+
     return render(
         request,
         "tenant/bank_transactions_suggestions.html",
@@ -305,8 +344,108 @@ def bank_transaction_suggestions(request, statement_id: int):
             "statement": statement,
             "transactions": txs,
             "reconciliations": reconciliations,
+            "transaction_rows": transaction_rows,
         },
     )
+
+
+@login_required
+@tenant_required
+@module_enabled_required("banking")
+@tenant_group_required("Administrador de empresa", "Operador financiero")
+def reconciliation_manual(request, transaction_id: int):
+    bank_tx = BankTransaction.objects.select_related("statement").filter(
+        pk=transaction_id
+    ).first()
+    if not bank_tx:
+        messages.error(request, "Transacción bancaria no encontrada.")
+        return redirect("bank_statement_list")
+    if request.method != "POST":
+        return redirect("bank_transaction_suggestions", statement_id=bank_tx.statement_id)
+
+    form = ReconciliationManualForm(request.POST, prefix=f"tx-{bank_tx.pk}")
+    if form.is_valid():
+        payment = form.cleaned_data.get("payment")
+        financial_entry = form.cleaned_data.get("financial_entry")
+        if payment:
+            financial_entry = payment.financial_entry
+        rec, _ = Reconciliation.objects.update_or_create(
+            bank_transaction=bank_tx,
+            status=Reconciliation.PROPOSED,
+            defaults={
+                "payment": payment,
+                "financial_entry": financial_entry,
+                "match_confidence": 100,
+                "reconciliation_type": "manual",
+                "matched_concept": bank_tx.concept or bank_tx.description,
+                "created_by": request.user,
+            },
+        )
+        messages.success(request, "Enlace manual creado. Confírmelo para conciliar.")
+    else:
+        messages.error(request, "Seleccione un pago o movimiento válido.")
+    return redirect("bank_transaction_suggestions", statement_id=bank_tx.statement_id)
+
+
+def _confirm_reconciliation(rec, user):
+    """Confirma una conciliación y materializa el pago cuando haga falta."""
+    bank_tx = rec.bank_transaction
+    if not rec.payment and rec.financial_entry:
+        payment, _ = Payment.objects.get_or_create(
+            financial_entry=rec.financial_entry,
+            payment_date=bank_tx.transaction_date,
+            amount=bank_tx.amount,
+            currency=bank_tx.currency,
+            defaults={
+                "concept": bank_tx.description[:255] if bank_tx.description else "",
+                "created_by": user,
+            },
+        )
+        rec.payment = payment
+
+    rec.status = Reconciliation.CONFIRMED
+    rec.matched_at = timezone.now()
+    rec.save(update_fields=["payment", "status", "matched_at"])
+    bank_tx.status = BankTransaction.RECONCILED
+    bank_tx.save(update_fields=["status"])
+
+    if rec.financial_entry and rec.payment:
+        paid_total = Decimal("0")
+        for payment in rec.financial_entry.payments.all():
+            paid_total += _convert_amount(
+                payment.amount,
+                payment.currency,
+                rec.financial_entry.currency,
+                payment.payment_date,
+            )
+        _sync_payment_status(rec.financial_entry, paid_total)
+    return rec
+
+
+@login_required
+@tenant_required
+@module_enabled_required("banking")
+@tenant_group_required("Administrador de empresa", "Operador financiero")
+def reconciliation_bulk_confirm(request, statement_id: int):
+    if request.method != "POST":
+        return redirect("bank_transaction_suggestions", statement_id=statement_id)
+    ids = request.POST.getlist("reconciliation_ids")
+    reconciliations = Reconciliation.objects.filter(
+        pk__in=ids,
+        bank_transaction__statement_id=statement_id,
+        status=Reconciliation.PROPOSED,
+    )
+    confirmed = 0
+    try:
+        with transaction.atomic():
+            for rec in reconciliations:
+                _confirm_reconciliation(rec, request.user)
+                confirmed += 1
+    except ValueError as exc:
+        messages.error(request, f"No se pudo convertir la moneda de un pago: {exc}")
+        return redirect("bank_transaction_suggestions", statement_id=statement_id)
+    messages.success(request, f"{confirmed} conciliaciones confirmadas.")
+    return redirect("bank_transaction_suggestions", statement_id=statement_id)
 
 
 @login_required
@@ -332,6 +471,8 @@ def reconciliation_confirm(request, rec_id: int):
     if action == "reject":
         rec.status = Reconciliation.REJECTED
         rec.save(update_fields=["status"])
+        rec.bank_transaction.status = BankTransaction.REJECTED
+        rec.bank_transaction.save(update_fields=["status"])
         messages.success(request, "Rechazado.")
         return redirect(
             "bank_transaction_suggestions",
@@ -339,32 +480,15 @@ def reconciliation_confirm(request, rec_id: int):
         )
 
     if rec.status != Reconciliation.CONFIRMED:
-        rec.status = Reconciliation.CONFIRMED
-        rec.matched_at = date.today()
-        rec.save(update_fields=["status", "matched_at"])
-
-    if not rec.payment and rec.financial_entry:
-        fin_entry = rec.financial_entry
-        bank_tx = rec.bank_transaction
-        with transaction.atomic():
-            payment_qs = Payment.objects.filter(
-                financial_entry=fin_entry,
-                payment_date=bank_tx.transaction_date,
-                amount=bank_tx.amount,
-                currency=bank_tx.currency,
+        try:
+            with transaction.atomic():
+                _confirm_reconciliation(rec, request.user)
+        except ValueError as exc:
+            messages.error(request, f"No se pudo convertir la moneda del pago: {exc}")
+            return redirect(
+                "bank_transaction_suggestions",
+                statement_id=rec.bank_transaction.statement_id,
             )
-            payment = payment_qs.first()
-            if not payment:
-                payment = Payment.objects.create(
-                    financial_entry=fin_entry,
-                    payment_date=bank_tx.transaction_date,
-                    amount=bank_tx.amount,
-                    currency=bank_tx.currency,
-                    concept=bank_tx.description[:255] if bank_tx.description else "",
-                    created_by=request.user,
-                )
-            rec.payment = payment
-            rec.save(update_fields=["payment"])
 
     messages.success(request, "Conciliación confirmada correctamente.")
     return redirect(

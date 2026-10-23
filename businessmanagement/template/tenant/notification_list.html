@@ -1,0 +1,21 @@
+{% extends "tenant/base.html" %}
+{% block title %}Notificaciones | System Manager{% endblock %}
+{% block workspace_content %}
+<div class="container-fluid py-3">
+  <div class="d-flex justify-content-between align-items-center mb-4">
+    <div><h2 class="h4 mb-1">Notificaciones</h2><p class="text-muted mb-0">Alertas financieras y eventos importantes de la empresa.</p></div>
+    <form method="post" action="{% url 'notification_read_all' %}">{% csrf_token %}<button class="btn btn-outline-primary" type="submit">Marcar todas como leídas</button></form>
+  </div>
+  <div class="mb-3"><a class="btn btn-sm btn-outline-secondary" href="{% url 'notification_list' %}">Todas</a> <a class="btn btn-sm btn-outline-warning" href="?status=unread">No leídas</a></div>
+  <div class="list-group">
+    {% for notification in notifications %}
+      <a href="{% url 'notification_open' notification.id %}" class="list-group-item list-group-item-action {% if not notification.is_read %}border-start border-4 border-{{ notification.level }} bg-light{% endif %}">
+        <div class="d-flex justify-content-between gap-3"><strong>{{ notification.title }}</strong><small class="text-muted">{{ notification.created_at|date:"d/m/Y H:i" }}</small></div>
+        <div class="text-muted mt-1">{{ notification.message }}</div>
+        {% if not notification.is_read %}<span class="badge bg-primary mt-2">Nueva</span>{% endif %}
+      </a>
+    {% empty %}<div class="alert alert-info">No tienes notificaciones.</div>{% endfor %}
+  </div>
+  {% if notifications.has_other_pages %}<nav class="mt-3"><ul class="pagination">{% if notifications.has_previous %}<li class="page-item"><a class="page-link" href="?page={{ notifications.previous_page_number }}">Anterior</a></li>{% endif %}{% if notifications.has_next %}<li class="page-item"><a class="page-link" href="?page={{ notifications.next_page_number }}">Siguiente</a></li>{% endif %}</ul></nav>{% endif %}
+</div>
+{% endblock %}

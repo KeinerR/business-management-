@@ -1,0 +1,9 @@
+{% extends "tenant/base.html" %}
+{% block title %}Solicitar aprobación | System Manager{% endblock %}
+{% block workspace_content %}
+<div class="container py-3" style="max-width:760px">
+  <h2 class="h4">Solicitar aprobación</h2>
+  <div class="alert alert-info"><strong>{{ target_title }}</strong><br>{{ amount|floatformat:2 }} {{ currency }}</div>
+  <form method="post" class="card card-body">{% csrf_token %}{{ form.as_p }}<div><button class="btn btn-primary" type="submit">Enviar solicitud</button> <a class="btn btn-outline-secondary" href="{% url 'approval_list' %}">Cancelar</a></div></form>
+</div>
+{% endblock %}

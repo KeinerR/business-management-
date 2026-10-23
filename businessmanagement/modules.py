@@ -25,6 +25,10 @@ AVAILABLE_MODULES = (
     ("audit", "Auditoría"),
     ("users", "Usuarios"),
     ("groups", "Grupos y Roles"),
+    ("notifications", "Notificaciones internas"),
+    ("approvals", "Flujos de aprobación"),
+    ("chart_accounts", "Plan contable"),
+    ("documents", "Gestión documental"),
 )
 
 # Módulos recomendados por defecto para personas naturales
@@ -54,15 +58,19 @@ MODULES_BUSINESS = [
     "audit",
     "users",
     "groups",
+    "notifications",
+    "approvals",
+    "chart_accounts",
+    "documents",
 ]
 
 # Categorías de módulos para visualización agrupada en Dashboard y Sidebar
 MODULE_GROUPS = {
     "Resumen": ["cartera"],
-    "Gestión Financiera": ["finances", "categories", "banking", "currency_rates", "budget"],
+    "Gestión Financiera": ["finances", "categories", "chart_accounts", "banking", "currency_rates", "budget"],
     "Comercial y Ventas": ["invoices", "quotes", "credit_notes", "debit_notes", "taxes"],
     "Operaciones y CRM": ["third_parties", "projects", "employees"],
     "Banca y Pagos": ["payments", "bank_statements", "reconciliations"],
-    "Herramientas": ["import_batch", "audit"],
+    "Herramientas": ["documents", "import_batch", "audit", "notifications", "approvals"],
     "Accesos": ["users", "groups"],
 }

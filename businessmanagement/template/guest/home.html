@@ -1,584 +1,737 @@
 {% extends "base.html" %}
 
-{% block title %}SystemManager | Gestion multiempresa{% endblock %}
-
+{% block title %}SystemManager | Finanzas y operación en un solo lugar{% endblock %}
 {% block main_class %}app-main p-0{% endblock %}
 
 {% block extra_css %}
 <style>
-	.guest-home {
-		background:
-			linear-gradient(180deg, #ffffff 0%, #f6f8f7 46%, #eef3f1 100%);
-		color: var(--sm-ink);
+	.marketing-home {
+		--marketing-ink: #122321;
+		--marketing-muted: #61716e;
+		--marketing-green: #146e65;
+		--marketing-pale: #e8f3f0;
+		color: var(--marketing-ink);
+		background: #fff;
 	}
 
-	.guest-container {
-		width: min(1180px, calc(100% - 2rem));
+	.marketing-container {
+		width: min(1160px, calc(100% - 2.5rem));
 		margin-inline: auto;
 	}
 
-	.guest-hero {
-		min-height: calc(100vh - 112px);
+	.marketing-hero {
+		position: relative;
+		overflow: hidden;
+		background:
+			radial-gradient(ellipse at 90% 0%, rgba(74, 166, 151, .18), transparent 34rem),
+			linear-gradient(145deg, #f3f8f6, #fff 62%);
+		padding: clamp(4rem, 9vw, 7.5rem) 0 clamp(3.5rem, 7vw, 6rem);
+	}
+
+	.marketing-hero-grid {
 		display: grid;
+		grid-template-columns: minmax(0, 1.1fr) minmax(300px, .9fr);
 		align-items: center;
-		padding: clamp(2rem, 5vw, 4.5rem) 0 2rem;
+		gap: clamp(2rem, 6vw, 5rem);
 	}
 
-	.hero-panel {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr);
-		gap: clamp(1.4rem, 3vw, 2rem);
-	}
-
-	.hero-copy {
-		max-width: 860px;
-	}
-
-	.eyebrow {
+	.marketing-eyebrow {
 		display: inline-flex;
 		align-items: center;
-		gap: .5rem;
-		border: 1px solid #cddbd8;
+		gap: .55rem;
+		border: 1px solid #cfe0dc;
 		border-radius: 999px;
-		background: #fff;
-		color: var(--sm-brand-dark);
-		font-size: .82rem;
+		background: rgba(255, 255, 255, .78);
+		color: var(--marketing-green);
+		font-size: .78rem;
 		font-weight: 800;
-		padding: .42rem .75rem;
+		letter-spacing: .04em;
+		padding: .5rem .8rem;
 		text-transform: uppercase;
 	}
 
-	.eyebrow::before {
-		content: "";
-		width: .5rem;
-		height: .5rem;
+	.marketing-eyebrow::before {
+		width: .55rem;
+		height: .55rem;
 		border-radius: 50%;
-		background: var(--sm-accent);
+		background: #d99a38;
+		content: "";
 	}
 
-	.hero-title {
-		font-size: clamp(2.5rem, 7vw, 5.25rem);
+	.marketing-title {
+		max-width: 700px;
+		margin: 1.25rem 0 1rem;
+		font-size: clamp(2.8rem, 6.8vw, 5.3rem);
 		font-weight: 800;
-		line-height: .98;
-		margin: 1.15rem 0 1rem;
-		max-width: 980px;
+		letter-spacing: -.055em;
+		line-height: .99;
 	}
 
-	.hero-lead {
-		color: var(--sm-muted);
-		font-size: clamp(1rem, 2vw, 1.2rem);
-		line-height: 1.65;
-		max-width: 760px;
+	.marketing-title em {
+		color: var(--marketing-green);
+		font-style: normal;
+	}
+
+	.marketing-lead {
+		max-width: 610px;
 		margin: 0;
+		color: var(--marketing-muted);
+		font-size: clamp(1.05rem, 1.8vw, 1.22rem);
+		line-height: 1.7;
 	}
 
-	.hero-actions {
+	.marketing-actions {
 		display: flex;
 		flex-wrap: wrap;
-		gap: .75rem;
-		margin-top: 1.5rem;
+		gap: .8rem;
+		margin-top: 1.7rem;
 	}
 
-	.btn-guest-primary,
-	.btn-guest-secondary {
-		border-radius: 8px;
-		font-weight: 800;
-		padding: .82rem 1rem;
+	.marketing-primary,
+	.marketing-secondary {
+		display: inline-flex;
+		min-height: 48px;
+		align-items: center;
+		justify-content: center;
+		border-radius: 10px;
+		font-weight: 750;
+		padding: .78rem 1.1rem;
+		text-decoration: none;
+		transition: transform .18s ease, box-shadow .18s ease, background .18s ease;
 	}
 
-	.btn-guest-primary {
-		background: var(--sm-brand);
-		border: 1px solid var(--sm-brand);
-		color: #fff;
+	.marketing-primary {
+		border: 1px solid var(--marketing-green);
+		background: var(--marketing-green);
+		color: white;
+		box-shadow: 0 8px 20px rgba(20, 110, 101, .18);
 	}
 
-	.btn-guest-primary:hover {
-		background: var(--sm-brand-dark);
-		border-color: var(--sm-brand-dark);
-		color: #fff;
+	.marketing-primary:hover {
+		transform: translateY(-2px);
+		background: #0f5b54;
+		color: white;
+		box-shadow: 0 12px 24px rgba(20, 110, 101, .23);
 	}
 
-	.btn-guest-secondary {
-		background: #fff;
-		border: 1px solid #cbd8d5;
-		color: var(--sm-ink);
+	.marketing-secondary {
+		border: 1px solid #cad9d5;
+		background: white;
+		color: var(--marketing-ink);
 	}
 
-	.btn-guest-secondary:hover {
-		border-color: var(--sm-brand);
-		color: var(--sm-brand-dark);
+	.marketing-secondary:hover {
+		transform: translateY(-2px);
+		border-color: var(--marketing-green);
+		color: var(--marketing-green);
 	}
 
-	.product-console {
-		border: 1px solid #cad9d6;
-		border-radius: 8px;
-		background: #fff;
-		box-shadow: var(--sm-shadow);
+	.marketing-caption {
+		margin-top: 1rem;
+		color: var(--marketing-muted);
+		font-size: .84rem;
+	}
+
+	.product-illustration {
+		position: relative;
+		padding: 1rem;
+		border: 1px solid #d4e2de;
+		border-radius: 24px;
+		background: rgba(255, 255, 255, .84);
+		box-shadow: 0 28px 70px rgba(27, 67, 59, .13);
+		transform: rotate(1deg);
+	}
+
+	.illustration-window {
 		overflow: hidden;
+		border: 1px solid #dce7e4;
+		border-radius: 16px;
+		background: #f8fbfa;
 	}
 
-	.console-topbar {
+	.illustration-top {
 		display: flex;
 		align-items: center;
-		justify-content: space-between;
-		gap: 1rem;
-		border-bottom: 1px solid var(--sm-line);
-		background: #f9fbfa;
-		padding: .8rem 1rem;
+		gap: .45rem;
+		border-bottom: 1px solid #e1eae7;
+		background: #fff;
+		padding: .9rem 1rem;
 	}
 
-	.console-brand {
-		display: flex;
-		align-items: center;
-		gap: .6rem;
-		font-weight: 800;
-		color: var(--sm-brand-dark);
+	.illustration-dot {
+		width: .55rem;
+		height: .55rem;
+		border-radius: 50%;
+		background: #d4e0dc;
 	}
 
-	.console-mark {
-		width: 1rem;
-		height: 1rem;
-		border-radius: 4px;
-		background: linear-gradient(135deg, var(--sm-brand), var(--sm-blue));
-	}
-
-	.console-status {
-		color: var(--sm-muted);
+	.illustration-brand {
+		margin-left: .4rem;
+		color: #215f58;
 		font-size: .88rem;
+		font-weight: 800;
 	}
 
-	.console-grid {
+	.illustration-body {
 		display: grid;
-		grid-template-columns: 220px minmax(0, 1fr);
-		min-height: 390px;
+		grid-template-columns: 120px minmax(0, 1fr);
+		min-height: 320px;
 	}
 
-	.console-sidebar {
-		border-right: 1px solid var(--sm-line);
-		background: #f5f8f7;
-		padding: 1rem;
+	.illustration-nav {
+		border-right: 1px solid #e1eae7;
+		background: #f2f7f5;
+		padding: 1rem .65rem;
 	}
 
-	.console-link {
+	.illustration-nav span {
+		display: block;
+		margin: .2rem 0;
+		border-radius: 7px;
+		color: #70817d;
+		font-size: .72rem;
+		font-weight: 650;
+		padding: .62rem .55rem;
+	}
+
+	.illustration-nav span:first-child {
+		background: #dcece8;
+		color: #155f56;
+	}
+
+	.illustration-content {
+		padding: 1.15rem;
+	}
+
+	.illustration-heading {
+		width: 55%;
+		height: 13px;
+		margin: .25rem 0 1rem;
+		border-radius: 99px;
+		background: #c9d9d5;
+	}
+
+	.illustration-subheading {
+		width: 34%;
+		height: 8px;
+		margin-bottom: 1.3rem;
+		border-radius: 99px;
+		background: #e0e9e6;
+	}
+
+	.illustration-cards {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: .55rem;
+	}
+
+	.illustration-card {
+		height: 70px;
+		border: 1px solid #e1eae7;
+		border-radius: 10px;
+		background: #fff;
+		padding: .7rem;
+	}
+
+	.illustration-card::before,
+	.illustration-card::after {
+		display: block;
+		height: 7px;
+		border-radius: 99px;
+		background: #e3ece9;
+		content: "";
+	}
+
+	.illustration-card::before {
+		width: 55%;
+		margin-bottom: .65rem;
+	}
+
+	.illustration-card::after {
+		width: 78%;
+		height: 12px;
+		background: #b8d9d2;
+	}
+
+	.illustration-chart {
 		display: flex;
-		justify-content: space-between;
-		gap: .75rem;
-		border-radius: 8px;
-		color: var(--sm-ink);
-		font-weight: 700;
-		padding: .7rem .75rem;
+		height: 118px;
+		align-items: end;
+		gap: .5rem;
+		margin-top: .7rem;
+		border: 1px solid #e1eae7;
+		border-radius: 10px;
+		background: white;
+		padding: .8rem;
 	}
 
-	.console-link.is-active {
-		background: #e6f0ee;
-		color: var(--sm-brand-dark);
+	.illustration-chart i {
+		flex: 1;
+		border-radius: 5px 5px 2px 2px;
+		background: linear-gradient(180deg, #49a394, #b8d9d2);
 	}
 
-	.console-main {
-		padding: 1rem;
+	.illustration-chart i:nth-child(1) { height: 32%; }
+	.illustration-chart i:nth-child(2) { height: 58%; }
+	.illustration-chart i:nth-child(3) { height: 43%; }
+	.illustration-chart i:nth-child(4) { height: 78%; }
+	.illustration-chart i:nth-child(5) { height: 63%; }
+	.illustration-chart i:nth-child(6) { height: 92%; }
+
+	.illustration-footnote {
+		margin: .8rem 0 0;
+		color: var(--marketing-muted);
+		font-size: .72rem;
+		text-align: center;
 	}
 
-	.console-metrics {
-		display: grid;
-		grid-template-columns: repeat(4, minmax(0, 1fr));
-		gap: .75rem;
-		margin-bottom: .9rem;
-	}
-
-	.console-metric,
-	.console-table,
-	.console-feed {
-		border: 1px solid var(--sm-line);
-		border-radius: 8px;
+	.trust-strip {
+		border-top: 1px solid #e5ece9;
+		border-bottom: 1px solid #e5ece9;
 		background: #fff;
 	}
 
-	.console-metric {
-		padding: .85rem;
-	}
-
-	.console-metric span {
-		display: block;
-		color: var(--sm-muted);
-		font-size: .78rem;
-		font-weight: 700;
-	}
-
-	.console-metric strong {
-		display: block;
-		color: var(--sm-brand-dark);
-		font-size: 1.45rem;
-		line-height: 1.1;
-		margin-top: .35rem;
-	}
-
-	.console-content-grid {
+	.trust-grid {
 		display: grid;
-		grid-template-columns: minmax(0, 1.35fr) minmax(240px, .65fr);
-		gap: .75rem;
+		grid-template-columns: repeat(3, 1fr);
+		padding: 1.25rem 0;
 	}
 
-	.console-table {
-		overflow: hidden;
+	.trust-item {
+		padding: .35rem 1.25rem;
+		text-align: center;
 	}
 
-	.console-table-row {
-		display: grid;
-		grid-template-columns: 1fr 120px 92px;
-		gap: .75rem;
-		border-bottom: 1px solid var(--sm-line);
-		padding: .78rem .85rem;
-		font-size: .9rem;
+	.trust-item + .trust-item {
+		border-left: 1px solid #e5ece9;
 	}
 
-	.console-table-row:last-child {
-		border-bottom: 0;
+	.trust-item strong {
+		display: block;
+		font-size: .97rem;
 	}
 
-	.console-table-row.is-head {
-		background: #f7faf9;
-		color: var(--sm-muted);
+	.trust-item span {
+		color: var(--marketing-muted);
+		font-size: .83rem;
+	}
+
+	.marketing-section {
+		padding: clamp(3.5rem, 7vw, 6rem) 0;
+	}
+
+	.marketing-section-soft {
+		background: #f5f8f7;
+	}
+
+	.marketing-section-heading {
+		max-width: 700px;
+		margin: 0 auto 2rem;
+		text-align: center;
+	}
+
+	.marketing-kicker {
+		color: var(--marketing-green);
 		font-size: .78rem;
 		font-weight: 800;
+		letter-spacing: .08em;
 		text-transform: uppercase;
 	}
 
-	.console-feed {
-		padding: .9rem;
-	}
-
-	.feed-item {
-		border-bottom: 1px solid var(--sm-line);
-		padding: .65rem 0;
-	}
-
-	.feed-item:first-child {
-		padding-top: 0;
-	}
-
-	.feed-item:last-child {
-		border-bottom: 0;
-		padding-bottom: 0;
-	}
-
-	.feed-item strong {
-		display: block;
-		font-size: .92rem;
-	}
-
-	.feed-item span {
-		color: var(--sm-muted);
-		font-size: .82rem;
-	}
-
-	.section-band {
-		padding: clamp(2.2rem, 6vw, 4.5rem) 0;
-	}
-
-	.section-heading {
-		max-width: 760px;
-		margin-bottom: 1.25rem;
-	}
-
-	.section-kicker {
-		color: var(--sm-brand-dark);
-		font-size: .8rem;
+	.marketing-section-heading h2 {
+		margin: .55rem 0 .75rem;
+		font-size: clamp(2rem, 4.5vw, 3.25rem);
 		font-weight: 800;
-		text-transform: uppercase;
+		letter-spacing: -.04em;
+		line-height: 1.08;
 	}
 
-	.section-heading h2 {
-		font-size: clamp(1.8rem, 4vw, 3rem);
+	.marketing-section-heading p {
+		margin: 0;
+		color: var(--marketing-muted);
+		font-size: 1.04rem;
+		line-height: 1.7;
+	}
+
+	.feature-grid {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 1rem;
+	}
+
+	.feature-card {
+		height: 100%;
+		border: 1px solid #e1e9e6;
+		border-radius: 16px;
+		background: #fff;
+		padding: 1.35rem;
+		transition: transform .18s ease, box-shadow .18s ease;
+	}
+
+	.feature-card:hover {
+		transform: translateY(-3px);
+		box-shadow: 0 15px 32px rgba(23, 55, 48, .08);
+	}
+
+	.feature-icon {
+		display: grid;
+		width: 44px;
+		height: 44px;
+		place-items: center;
+		border-radius: 12px;
+		background: var(--marketing-pale);
+		color: var(--marketing-green);
+		font-size: 1.08rem;
+		font-weight: 850;
+	}
+
+	.feature-card h3 {
+		margin: 1rem 0 .45rem;
+		font-size: 1.08rem;
 		font-weight: 800;
-		line-height: 1.05;
-		margin: .35rem 0 .65rem;
 	}
 
-	.section-heading p {
-		color: var(--sm-muted);
+	.feature-card p {
+		margin: 0;
+		color: var(--marketing-muted);
+		line-height: 1.62;
+	}
+
+	.audience-grid {
+		display: grid;
+		grid-template-columns: repeat(2, 1fr);
+		gap: 1rem;
+	}
+
+	.audience-card {
+		border: 1px solid #dce7e3;
+		border-radius: 18px;
+		background: white;
+		padding: clamp(1.4rem, 3vw, 2rem);
+	}
+
+	.audience-card h3 {
+		margin: .8rem 0 .5rem;
+		font-size: 1.35rem;
+		font-weight: 800;
+	}
+
+	.audience-card p {
+		color: var(--marketing-muted);
 		line-height: 1.65;
-		margin: 0;
 	}
 
-	.capability-grid {
+	.audience-card ul {
 		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
-		gap: .9rem;
+		gap: .55rem;
+		margin: 1rem 0 0;
+		padding: 0;
+		list-style: none;
 	}
 
-	.capability-card {
-		border: 1px solid var(--sm-line);
-		border-radius: 8px;
-		background: #fff;
-		padding: 1rem;
-		min-height: 168px;
+	.audience-card li {
+		display: flex;
+		gap: .6rem;
+		align-items: start;
 	}
 
-	.capability-card h3 {
+	.audience-card li::before {
+		color: var(--marketing-green);
+		font-weight: 900;
+		content: "✓";
+	}
+
+	.marketing-steps {
+		display: grid;
+		grid-template-columns: repeat(4, 1fr);
+		gap: .85rem;
+		counter-reset: onboarding;
+	}
+
+	.marketing-step {
+		position: relative;
+		border-top: 2px solid #bdd8d2;
+		padding: 1.1rem .9rem 0;
+		counter-increment: onboarding;
+	}
+
+	.marketing-step::before {
+		color: var(--marketing-green);
+		font-size: .8rem;
+		font-weight: 850;
+		content: "0" counter(onboarding);
+	}
+
+	.marketing-step h3 {
+		margin: .6rem 0 .4rem;
 		font-size: 1rem;
 		font-weight: 800;
-		margin-bottom: .5rem;
 	}
 
-	.capability-card p {
-		color: var(--sm-muted);
-		line-height: 1.55;
+	.marketing-step p {
 		margin: 0;
+		color: var(--marketing-muted);
+		line-height: 1.6;
 	}
 
-	.flow-grid {
-		display: grid;
-		grid-template-columns: repeat(4, minmax(0, 1fr));
-		gap: .75rem;
+	.marketing-final {
+		padding: clamp(2.5rem, 5vw, 4rem) 0;
+		background: #123d38;
+		color: white;
 	}
 
-	.flow-step {
-		border-left: 3px solid var(--sm-brand);
-		background: #fff;
-		padding: 1rem;
-		min-height: 142px;
-	}
-
-	.flow-step span {
-		color: var(--sm-accent);
-		font-size: .78rem;
-		font-weight: 800;
-	}
-
-	.flow-step h3 {
-		font-size: 1rem;
-		font-weight: 800;
-		margin: .45rem 0;
-	}
-
-	.flow-step p {
-		color: var(--sm-muted);
-		margin: 0;
-	}
-
-	.guest-cta {
-		border-top: 1px solid var(--sm-line);
-		background: #fff;
-		padding: clamp(2rem, 5vw, 3.5rem) 0;
-	}
-
-	.cta-panel {
+	.marketing-final-row {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		gap: 1rem;
-		border: 1px solid #cad9d6;
-		border-radius: 8px;
-		padding: clamp(1rem, 3vw, 1.5rem);
-		background: #f8faf9;
+		gap: 2rem;
 	}
 
-	.cta-panel h2 {
-		font-size: clamp(1.35rem, 3vw, 2rem);
+	.marketing-final h2 {
+		max-width: 660px;
+		margin: 0 0 .55rem;
+		font-size: clamp(1.8rem, 3.5vw, 2.7rem);
 		font-weight: 800;
-		margin: 0 0 .35rem;
+		letter-spacing: -.035em;
 	}
 
-	.cta-panel p {
-		color: var(--sm-muted);
+	.marketing-final p {
 		margin: 0;
+		color: #c8d9d5;
 	}
 
-	@media (max-width: 991.98px) {
-		.console-grid,
-		.console-content-grid,
-		.capability-grid,
-		.flow-grid {
+	.marketing-final .marketing-primary {
+		flex-shrink: 0;
+		border-color: white;
+		background: white;
+		color: #123d38;
+		box-shadow: none;
+	}
+
+	.marketing-footer {
+		padding: 1.25rem 0;
+		background: #0d302c;
+		color: #c8d9d5;
+		font-size: .85rem;
+	}
+
+	@media (max-width: 900px) {
+		.marketing-hero-grid {
 			grid-template-columns: 1fr;
 		}
 
-		.console-sidebar {
-			display: none;
+		.hero-copy {
+			max-width: 760px;
 		}
 
-		.console-metrics {
-			grid-template-columns: repeat(2, minmax(0, 1fr));
+		.product-illustration {
+			width: min(100%, 680px);
+			margin-inline: auto;
+		}
+
+		.feature-grid {
+			grid-template-columns: repeat(2, 1fr);
+		}
+
+		.marketing-steps {
+			grid-template-columns: repeat(2, 1fr);
+			row-gap: 1.5rem;
 		}
 	}
 
-	@media (max-width: 575.98px) {
-		.guest-container {
-			width: min(100% - 1rem, 1180px);
+	@media (max-width: 600px) {
+		.marketing-container {
+			width: min(100% - 1.25rem, 1160px);
 		}
 
-		.hero-actions,
-		.cta-panel {
-			align-items: stretch;
+		.marketing-hero {
+			padding-top: 3.2rem;
+		}
+
+		.marketing-actions {
 			flex-direction: column;
 		}
 
-		.btn-guest-primary,
-		.btn-guest-secondary {
+		.marketing-primary,
+		.marketing-secondary {
 			width: 100%;
 		}
 
-		.console-table-row {
+		.product-illustration {
+			padding: .55rem;
+			border-radius: 18px;
+			transform: none;
+		}
+
+		.illustration-body {
+			grid-template-columns: 82px minmax(0, 1fr);
+			min-height: 270px;
+		}
+
+		.illustration-nav {
+			padding-inline: .35rem;
+		}
+
+		.illustration-nav span {
+			font-size: .65rem;
+			padding-inline: .35rem;
+		}
+
+		.illustration-content {
+			padding: .8rem;
+		}
+
+		.trust-grid {
 			grid-template-columns: 1fr;
-			gap: .25rem;
+			gap: .7rem;
+		}
+
+		.trust-item + .trust-item {
+			border-left: 0;
+		}
+
+		.feature-grid,
+		.audience-grid,
+		.marketing-steps {
+			grid-template-columns: 1fr;
+		}
+
+		.marketing-final-row {
+			align-items: stretch;
+			flex-direction: column;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.marketing-primary,
+		.marketing-secondary,
+		.feature-card {
+			transition: none;
 		}
 	}
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="guest-home">
-	<section class="guest-hero">
-		<div class="guest-container">
-			<div class="hero-panel">
-				<div class="hero-copy">
-					<div class="eyebrow">SaaS multiempresa</div>
-					<h1 class="hero-title">SystemManager</h1>
-					<p class="hero-lead">
-						Una plataforma para operar empresas tenant con finanzas, usuarios, roles, terceros, tasas y auditoria desde un entorno rapido, claro y preparado para crecer.
-					</p>
-					<div class="hero-actions">
-						<a class="btn btn-guest-primary" href="{% url 'login' %}">Ingresar al sistema</a>
-						<a class="btn btn-guest-secondary" href="#operacion">Ver alcance operativo</a>
-					</div>
+<div class="marketing-home">
+	<section class="marketing-hero">
+		<div class="marketing-container marketing-hero-grid">
+			<div class="hero-copy">
+				<div class="marketing-eyebrow">Gestión para empresas y profesionales</div>
+				<h1 class="marketing-title">Tu negocio, con las cuentas <em>en orden.</em></h1>
+				<p class="marketing-lead">
+					Organiza finanzas, clientes, facturas y documentos desde una plataforma sencilla.
+					Deja atrás la información dispersa y toma decisiones con una visión más clara.
+				</p>
+				<div class="marketing-actions">
+					{% if not request.user.is_authenticated %}
+						<a class="marketing-primary" href="{% url 'login' %}">Ingresar a mi cuenta <span aria-hidden="true">&nbsp;→</span></a>
+					{% endif %}
+					<a class="marketing-secondary" href="#soluciones">Conocer la plataforma</a>
 				</div>
+				{% if request.user.is_authenticated %}
+					<p class="marketing-caption">Para acceder a tu espacio, visita el dominio de tu organización.</p>
+				{% else %}
+					<p class="marketing-caption">¿Ya tienes acceso? Inicia sesión con las credenciales de tu organización.</p>
+				{% endif %}
+			</div>
 
-				<div class="product-console" aria-label="Vista previa de SystemManager">
-					<div class="console-topbar">
-						<div class="console-brand"><span class="console-mark"></span>SystemManager</div>
-						<div class="console-status">Tenant operativo · Public master online</div>
+			<div class="product-illustration" role="img" aria-label="Ilustración conceptual de un panel financiero; no contiene datos de clientes">
+				<div class="illustration-window">
+					<div class="illustration-top">
+						<span class="illustration-dot"></span><span class="illustration-dot"></span><span class="illustration-dot"></span>
+						<span class="illustration-brand">Tu espacio de trabajo</span>
 					</div>
-					<div class="console-grid">
-						<aside class="console-sidebar">
-							<div class="console-link is-active"><span>Resumen</span><small>Inicio</small></div>
-							<div class="console-link"><span>Finanzas</span><small>Movs.</small></div>
-							<div class="console-link"><span>Terceros</span><small>CRM</small></div>
-							<div class="console-link"><span>Usuarios</span><small>Roles</small></div>
-							<div class="console-link"><span>Auditoria</span><small>Logs</small></div>
-						</aside>
-						<div class="console-main">
-							<div class="console-metrics">
-								<div class="console-metric"><span>Tenants</span><strong>12</strong></div>
-								<div class="console-metric"><span>Movimientos</span><strong>384</strong></div>
-								<div class="console-metric"><span>Pendientes</span><strong>27</strong></div>
-								<div class="console-metric"><span>Usuarios</span><strong>64</strong></div>
-							</div>
-							<div class="console-content-grid">
-								<div class="console-table">
-									<div class="console-table-row is-head">
-										<span>Operacion</span><span>Moneda</span><span>Estado</span>
-									</div>
-									<div class="console-table-row">
-										<span>Venta diaria sucursal norte</span><span>COP</span><span>Pagado</span>
-									</div>
-									<div class="console-table-row">
-										<span>Cuenta por cobrar distribuidor</span><span>USD</span><span>Parcial</span>
-									</div>
-									<div class="console-table-row">
-										<span>Pago proveedor tecnologia</span><span>EUR</span><span>Pendiente</span>
-									</div>
-									<div class="console-table-row">
-										<span>Tasa Binance P2P registrada</span><span>USDT</span><span>Activo</span>
-									</div>
-								</div>
-								<div class="console-feed">
-									<div class="feed-item">
-										<strong>Auditoria activa</strong>
-										<span>Empleado creado por admin</span>
-									</div>
-									<div class="feed-item">
-										<strong>Tenant aislado</strong>
-										<span>Schema dedicado por empresa</span>
-									</div>
-									<div class="feed-item">
-										<strong>Roles base</strong>
-										<span>Admin, operador y lectura</span>
-									</div>
-								</div>
-							</div>
+					<div class="illustration-body" aria-hidden="true">
+						<div class="illustration-nav">
+							<span>Resumen</span><span>Finanzas</span><span>Facturación</span><span>Clientes</span><span>Documentos</span>
+						</div>
+						<div class="illustration-content">
+							<div class="illustration-heading"></div>
+							<div class="illustration-subheading"></div>
+							<div class="illustration-cards"><div class="illustration-card"></div><div class="illustration-card"></div><div class="illustration-card"></div></div>
+							<div class="illustration-chart"><i></i><i></i><i></i><i></i><i></i><i></i></div>
 						</div>
 					</div>
 				</div>
+				<p class="illustration-footnote">Vista ilustrativa · no contiene información ni métricas de clientes</p>
 			</div>
 		</div>
 	</section>
 
-	<section id="operacion" class="section-band">
-		<div class="guest-container">
-			<div class="section-heading">
-				<div class="section-kicker">Operacion diaria</div>
-				<h2>Los modulos clave quedan cerca de la accion.</h2>
-				<p>La experiencia guest comunica lo que el producto ya hace: separar tenants, operar usuarios y capturar datos financieros sin perder trazabilidad.</p>
+	<section class="trust-strip" aria-label="Principios del producto">
+		<div class="marketing-container trust-grid">
+			<div class="trust-item"><strong>Una visión organizada</strong><span>Herramientas conectadas en un mismo lugar</span></div>
+			<div class="trust-item"><strong>Control por organización</strong><span>Accesos y módulos según cada espacio de trabajo</span></div>
+			<div class="trust-item"><strong>Menos tareas repetidas</strong><span>Flujos para registrar, revisar y dar seguimiento</span></div>
+		</div>
+	</section>
+
+	<section id="soluciones" class="marketing-section">
+		<div class="marketing-container">
+			<div class="marketing-section-heading">
+				<div class="marketing-kicker">Una plataforma, menos dispersión</div>
+				<h2>Lo importante de tu operación, conectado.</h2>
+				<p>Gestiona el trabajo cotidiano con herramientas que ayudan a mantener la información ordenada y disponible para tu equipo.</p>
 			</div>
-			<div class="capability-grid">
-				<article class="capability-card">
-					<h3>Panel master</h3>
-					<p>Creacion de tenants, dominios, empresa base, administrador inicial y supervision global de actividad.</p>
-				</article>
-				<article class="capability-card">
-					<h3>Workspace tenant</h3>
-					<p>Dashboard interno con empleados, usuarios, grupos, terceros, tasas, movimientos y auditoria.</p>
-				</article>
-				<article class="capability-card">
-					<h3>Finanzas esenciales</h3>
-					<p>Ingresos, egresos, cuentas por cobrar, cuentas por pagar, estados y totales por moneda.</p>
-				</article>
-				<article class="capability-card">
-					<h3>Control de acceso</h3>
-					<p>Roles base por tenant y grupos personalizados para ordenar el alcance de cada usuario.</p>
-				</article>
-				<article class="capability-card">
-					<h3>Terceros</h3>
-					<p>Directorio de clientes y proveedores conectado a los movimientos operativos.</p>
-				</article>
-				<article class="capability-card">
-					<h3>Auditoria</h3>
-					<p>Eventos criticos registrados para seguimiento de bootstrap, empleados, tasas, grupos y finanzas.</p>
-				</article>
+			<div class="feature-grid">
+				<article class="feature-card"><div class="feature-icon" aria-hidden="true">$</div><h3>Finanzas y cartera</h3><p>Registra ingresos, gastos, cobros y pagos. Consulta pendientes y da seguimiento a los movimientos.</p></article>
+				<article class="feature-card"><div class="feature-icon" aria-hidden="true">F</div><h3>Facturas y cotizaciones</h3><p>Prepara propuestas, gestiona facturas y acompaña el ciclo comercial desde un mismo espacio.</p></article>
+				<article class="feature-card"><div class="feature-icon" aria-hidden="true">C</div><h3>Clientes y proveedores</h3><p>Mantén un directorio organizado de terceros y relaciónalo con la actividad financiera.</p></article>
+				<article class="feature-card"><div class="feature-icon" aria-hidden="true">B</div><h3>Bancos y conciliación</h3><p>Importa extractos y facilita la revisión de transacciones frente a tus registros.</p></article>
+				<article class="feature-card"><div class="feature-icon" aria-hidden="true">D</div><h3>Documentos y control</h3><p>Conserva documentos con versiones y organiza solicitudes de aprobación y notificaciones.</p></article>
+				<article class="feature-card"><div class="feature-icon" aria-hidden="true">R</div><h3>Presupuestos e informes</h3><p>Compara presupuestos con la actividad registrada y revisa proyecciones para planificar.</p></article>
 			</div>
 		</div>
 	</section>
 
-	<section class="section-band pt-0">
-		<div class="guest-container">
-			<div class="section-heading">
-				<div class="section-kicker">Modelo de trabajo</div>
-				<h2>De la plataforma publica al schema de cada empresa.</h2>
+	<section class="marketing-section marketing-section-soft">
+		<div class="marketing-container">
+			<div class="marketing-section-heading">
+				<div class="marketing-kicker">Se adapta a tu forma de trabajar</div>
+				<h2>Para equipos y profesionales que necesitan claridad.</h2>
+				<p>Configura el espacio de trabajo de acuerdo con el tipo de operación y las herramientas que realmente necesitas.</p>
 			</div>
-			<div class="flow-grid">
-				<article class="flow-step">
-					<span>01</span>
-					<h3>Aprovisionar</h3>
-					<p>El master crea tenant, dominio, empresa y usuario administrador.</p>
+			<div class="audience-grid">
+				<article class="audience-card">
+					<div class="marketing-kicker">Para empresas</div>
+					<h3>Coordina a tu equipo con más contexto.</h3>
+					<p>Reúne procesos comerciales y financieros para que las personas adecuadas puedan colaborar.</p>
+					<ul><li>Gestiona roles y accesos del equipo.</li><li>Conecta clientes, proyectos y movimientos.</li><li>Da seguimiento a aprobaciones y documentos.</li></ul>
 				</article>
-				<article class="flow-step">
-					<span>02</span>
-					<h3>Asignar acceso</h3>
-					<p>El tenant define empleados, usuarios y grupos de operacion.</p>
-				</article>
-				<article class="flow-step">
-					<span>03</span>
-					<h3>Operar</h3>
-					<p>El equipo registra terceros, tasas y movimientos financieros.</p>
-				</article>
-				<article class="flow-step">
-					<span>04</span>
-					<h3>Supervisar</h3>
-					<p>Los dashboards muestran KPIs, pendientes, actividad y trazabilidad.</p>
+				<article class="audience-card">
+					<div class="marketing-kicker">Para profesionales</div>
+					<h3>Ten tus finanzas a la mano.</h3>
+					<p>Organiza ingresos, gastos, proyectos y compromisos sin depender de múltiples hojas de cálculo.</p>
+					<ul><li>Consulta movimientos y pagos pendientes.</li><li>Organiza proyectos y categorías.</li><li>Revisa tu actividad desde un panel claro.</li></ul>
 				</article>
 			</div>
 		</div>
 	</section>
 
-	<section class="guest-cta">
-		<div class="guest-container">
-			<div class="cta-panel">
-				<div>
-					<h2>Acceso operativo para administradores y tenants.</h2>
-					<p>Entra desde el dominio correcto: public para plataforma, tenant para empresa.</p>
-				</div>
-				<a class="btn btn-guest-primary" href="{% url 'login' %}">Entrar ahora</a>
+	<section id="como-funciona" class="marketing-section">
+		<div class="marketing-container">
+			<div class="marketing-section-heading">
+				<div class="marketing-kicker">Empieza con claridad</div>
+				<h2>Un flujo de trabajo fácil de entender.</h2>
+			</div>
+			<div class="marketing-steps">
+				<article class="marketing-step"><h3>Configura tu espacio</h3><p>Tu administrador prepara la organización y habilita sus herramientas.</p></article>
+				<article class="marketing-step"><h3>Invita a tu equipo</h3><p>Asigna roles para que cada persona tenga el acceso que necesita.</p></article>
+				<article class="marketing-step"><h3>Registra tu operación</h3><p>Centraliza movimientos, documentos, clientes y actividad comercial.</p></article>
+				<article class="marketing-step"><h3>Revisa y decide</h3><p>Consulta reportes y pendientes para dar el siguiente paso con confianza.</p></article>
 			</div>
 		</div>
 	</section>
+
+	<section class="marketing-final">
+		<div class="marketing-container marketing-final-row">
+			<div><h2>Una operación más clara empieza con un solo lugar.</h2><p>Accede a tu espacio de trabajo con las credenciales de tu organización.</p></div>
+			{% if not request.user.is_authenticated %}
+				<a class="marketing-primary" href="{% url 'login' %}">Ingresar a SystemManager <span aria-hidden="true">&nbsp;→</span></a>
+			{% endif %}
+		</div>
+	</section>
+	<footer class="marketing-footer"><div class="marketing-container">© {% now "Y" %} SystemManager · Gestión clara para el día a día.</div></footer>
 </div>
 {% endblock %}

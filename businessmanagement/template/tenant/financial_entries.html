@@ -204,6 +204,9 @@
 												</button>
 											</form>
 										{% endif %}
+										{% if entry.entry_type == 'expense' and "approvals" in request.tenant.enabled_modules %}
+										  {% if entry.approval_request %}<a class="btn btn-outline-primary" href="{% url 'approval_detail' entry.approval_request.id %}">Aprobación</a>{% else %}<a class="btn btn-outline-primary" href="{% url 'approval_request_create' 'expense' entry.id %}">Solicitar aprobación</a>{% endif %}
+										{% endif %}
 									</div>
 								</td>
 							</tr>

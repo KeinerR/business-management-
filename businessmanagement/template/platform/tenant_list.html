@@ -1,67 +1,130 @@
 {% extends "platform/base.html" %}
 
-{% block title %}Tenants | System Manager{% endblock %}
+{% block title %}Clientes y tenants | System Manager{% endblock %}
 
 {% block platform_content %}
-<section>
-	<div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-4">
-		<div>
-			<div class="text-uppercase text-success small fw-bold">Plataforma</div>
-			<h1 class="h3 mb-1">Tenants y dominios</h1>
-			<p class="text-secondary mb-0">Cada fila representa una empresa aislada en su propio schema.</p>
-		</div>
-		<a class="btn btn-sm-brand" href="{% url 'platform_tenant_create' %}">Crear tenant</a>
+<div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-4">
+	<div>
+		<div class="platform-kicker">Cartera de clientes</div>
+		<h1 class="h2 mb-1">Clientes y tenants</h1>
+		<p class="text-secondary mb-0">Busca cuentas, revisa el servicio y prioriza renovaciones y seguimiento.</p>
 	</div>
+	<a class="btn btn-sm-brand" href="{% url 'platform_tenant_create' %}">Crear cliente</a>
+</div>
 
-	<div class="table-responsive">
-		<table class="table table-hover align-middle">
-			<thead>
-				<tr>
-					<th>Empresa</th>
-					<th>Schema</th>
-					<th>Dominios</th>
-					<th>Estado</th>
-					<th>Creado</th>
-					<th>Acciones</th>
-				</tr>
-			</thead>
-			<tbody>
-				{% for tenant in tenants %}
-					<tr>
-						<td class="fw-semibold">{{ tenant.name }}</td>
-						<td><code>{{ tenant.schema_name }}</code></td>
-						<td>
-							{% for domain in tenant.domains.all %}
-								<a href="http://{{ domain.domain }}:5000" target="_blank" class="badge text-bg-light border text-decoration-none">{{ domain.domain }}</a>
-							{% empty %}
-								<span class="text-secondary">Sin dominio</span>
-							{% endfor %}
-						</td>
-						<td>
-							{% if tenant.is_active %}
-								<span class="badge bg-success">Activo</span>
-							{% else %}
-								<span class="badge bg-danger">Inactivo</span>
-							{% endif %}
-						</td>
-						<td>{{ tenant.created_on }}</td>
-						<td>
-							<div class="btn-group">
-								<a href="{% url 'platform_tenant_edit' tenant.id %}" class="btn btn-sm btn-outline-primary">Editar</a>
-								<form action="{% url 'platform_tenant_delete' tenant.id %}" method="post" class="d-inline" onsubmit="return confirm('¿Estás seguro de eliminar este tenant? Se borrarán todos sus datos permanentemente.')">
-									{% csrf_token %}
-									<button type="submit" class="btn btn-sm btn-outline-danger">Eliminar</button>
-								</form>
-							</div>
-						</td>
-					</tr>
-				{% empty %}
-					<tr>
-						<td colspan="4" class="text-secondary">No hay tenants creados.</td>
-					</tr>
+<form method="get" class="platform-card mb-3">
+	<div class="row g-2 align-items-end">
+		<div class="col-lg-5">
+			<label class="form-label" for="tenant-search">Buscar cliente</label>
+			<input class="form-control" id="tenant-search" name="q" type="search" value="{{ search }}" placeholder="Nombre, dominio, plan o schema">
+		</div>
+		<div class="col-md-4 col-lg-3">
+			<label class="form-label" for="service-status">Estado del servicio</label>
+			<select class="form-select" id="service-status" name="status">
+				<option value="">Todos los estados</option>
+				{% for value, label in status_choices %}
+					<option value="{{ value }}" {% if selected_status == value %}selected{% endif %}>{{ label }}</option>
 				{% endfor %}
-			</tbody>
-		</table>
+			</select>
+		</div>
+		<div class="col-md-4 col-lg-2">
+			<label class="form-label" for="renewal-filter">Renovación</label>
+			<select class="form-select" id="renewal-filter" name="renewal">
+				<option value="">Todas</option>
+				<option value="soon" {% if selected_renewal == "soon" %}selected{% endif %}>Próximos 30 días</option>
+				<option value="overdue" {% if selected_renewal == "overdue" %}selected{% endif %}>Vencida</option>
+			</select>
+		</div>
+		<div class="col-md-4 col-lg-2 d-flex gap-2">
+			<button class="btn btn-primary flex-grow-1" type="submit">Filtrar</button>
+			<a class="btn btn-outline-secondary" href="{% url 'platform_tenant_list' %}">Limpiar</a>
+		</div>
 	</div>
-</section>
+</form>
+
+<div class="d-flex justify-content-between align-items-center gap-2 flex-wrap mb-2">
+	<div class="small text-secondary">{{ page_obj.paginator.count }} cuentas · Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages|default:1 }}</div>
+	<div class="small text-secondary">Los datos de uso se consultan en el espacio aislado de cada cliente.</div>
+</div>
+
+<div class="table-responsive platform-card p-0">
+	<table class="table table-hover align-middle mb-0">
+		<thead>
+			<tr>
+				<th class="ps-3">Cliente / contacto</th>
+				<th>Dominio</th>
+				<th>Plan y estado</th>
+				<th>Renovación</th>
+				<th>Uso</th>
+				<th class="text-end pe-3">Seguimiento</th>
+			</tr>
+		</thead>
+		<tbody>
+			{% for card in tenant_cards %}
+				{% with tenant=card.tenant %}
+				<tr>
+					<td class="ps-3">
+						<a class="fw-semibold" href="{% url 'platform_tenant_detail' tenant.pk %}">{{ tenant.name }}</a>
+						<div class="small text-secondary">
+							{% if card.business %}
+								{{ card.business.name_business_owner }} {{ card.business.last_name_business_owner }} · {{ card.business.business_email }}
+							{% else %}
+								{{ tenant.get_tenant_type_display }} · {{ tenant.schema_name }}
+							{% endif %}
+						</div>
+					</td>
+					<td>
+						{% for domain in tenant.domains.all %}
+							<code class="d-block">{{ domain.domain }}</code>
+						{% empty %}
+							<span class="text-secondary">Sin dominio</span>
+						{% endfor %}
+					</td>
+					<td>
+						<div class="fw-semibold">{{ tenant.service_plan|default:"Plan sin definir" }}</div>
+						{% if not tenant.is_active %}
+							<span class="badge text-bg-danger">Acceso suspendido</span>
+							<div class="small text-secondary">Servicio: {{ tenant.get_service_status_display }}</div>
+						{% else %}
+							<span class="badge {% if tenant.service_status == 'past_due' %}text-bg-warning{% elif tenant.service_status == 'suspended' %}text-bg-danger{% elif tenant.service_status == 'trial' %}text-bg-info{% else %}text-bg-success{% endif %}">{{ tenant.get_service_status_display }}</span>
+						{% endif %}
+					</td>
+					<td>
+						{% if tenant.renewal_date %}
+							{{ tenant.renewal_date|date:"d/m/Y" }}
+							{% if tenant.renewal_date < today %}<div class="small text-danger">Vencida</div>{% endif %}
+						{% else %}
+							<span class="text-secondary">Sin fecha</span>
+						{% endif %}
+					</td>
+					<td>
+						{% if card.schema_ready %}
+							<span class="small">{{ card.employee_count }} empleados · {{ card.entry_count }} movimientos</span>
+						{% else %}
+							<span class="small text-warning">Datos del tenant no disponibles</span>
+						{% endif %}
+					</td>
+					<td class="text-end pe-3">
+						<a class="btn btn-sm btn-outline-primary" href="{% url 'platform_tenant_detail' tenant.pk %}">Abrir ficha</a>
+					</td>
+				</tr>
+				{% endwith %}
+			{% empty %}
+				<tr><td class="p-4 text-center text-secondary" colspan="6">No encontramos cuentas con esos filtros.</td></tr>
+			{% endfor %}
+		</tbody>
+	</table>
+</div>
+
+{% if page_obj.has_other_pages %}
+<nav class="d-flex justify-content-between align-items-center mt-3" aria-label="Paginación de clientes">
+	{% if page_obj.has_previous %}
+		<a class="btn btn-outline-secondary btn-sm" href="?q={{ search|urlencode }}&status={{ selected_status|urlencode }}&renewal={{ selected_renewal|urlencode }}&page={{ page_obj.previous_page_number }}">Anterior</a>
+	{% else %}<span></span>{% endif %}
+	<span class="small text-secondary">{{ page_obj.start_index }}–{{ page_obj.end_index }} de {{ page_obj.paginator.count }}</span>
+	{% if page_obj.has_next %}
+		<a class="btn btn-outline-secondary btn-sm" href="?q={{ search|urlencode }}&status={{ selected_status|urlencode }}&renewal={{ selected_renewal|urlencode }}&page={{ page_obj.next_page_number }}">Siguiente</a>
+	{% else %}<span></span>{% endif %}
+</nav>
+{% endif %}
 {% endblock %}

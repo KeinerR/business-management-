@@ -31,6 +31,26 @@
 			--sm-shadow: 0 12px 32px rgba(23, 33, 31, .07);
 		}
 
+		:root[data-theme="dark"] {
+			color-scheme: dark;
+			--sm-ink: #e6eeec;
+			--sm-muted: #a7b6b2;
+			--sm-brand: #55b8ad;
+			--sm-brand-dark: #8bd2ca;
+			--sm-accent: #e2b45f;
+			--sm-blue: #8bb9d5;
+			--sm-line: #354541;
+			--sm-surface: #1b2724;
+			--sm-soft: #263632;
+			--sm-panel: #202e2a;
+			--sm-warn: #e2b45f;
+			--bs-body-color: var(--sm-ink);
+			--bs-body-bg: #121a18;
+			--bs-secondary-color: var(--sm-muted);
+			--bs-border-color: var(--sm-line);
+			--bs-tertiary-bg: var(--sm-panel);
+		}
+
 		* {
 			letter-spacing: 0;
 		}
@@ -40,6 +60,10 @@
 			background: #f6f8f7;
 			color: var(--sm-ink);
 			font-family: "Inter", "Segoe UI", system-ui, sans-serif;
+		}
+
+		:root[data-theme="dark"] body {
+			background: #121a18;
 		}
 
 		.app-shell {
@@ -54,8 +78,16 @@
 
 		.app-navbar {
 			border-bottom: 1px solid var(--sm-line);
-			background: rgba(255, 255, 255, .96);
+			background: color-mix(in srgb, var(--sm-surface) 96%, transparent);
 			backdrop-filter: blur(12px);
+		}
+
+		.navbar-toggler {
+			border-color: var(--sm-line);
+		}
+
+		:root[data-theme="dark"] .navbar-toggler-icon {
+			filter: invert(1);
 		}
 
 		.app-brand {
@@ -158,7 +190,59 @@
 
 		.app-footer {
 			border-top: 1px solid var(--sm-line);
-			background: rgba(255, 255, 255, .92);
+			background: var(--sm-surface);
+		}
+
+		:root[data-theme="dark"] .card,
+		:root[data-theme="dark"] .modal-content,
+		:root[data-theme="dark"] .dropdown-menu,
+		:root[data-theme="dark"] .list-group-item,
+		:root[data-theme="dark"] .bg-white,
+		:root[data-theme="dark"] .bg-light,
+		:root[data-theme="dark"] .table {
+			--bs-card-bg: var(--sm-surface);
+			--bs-modal-bg: var(--sm-surface);
+			--bs-dropdown-bg: var(--sm-surface);
+			background-color: var(--sm-surface) !important;
+			color: var(--sm-ink);
+		}
+
+		:root[data-theme="dark"] .text-secondary,
+		:root[data-theme="dark"] .text-muted {
+			color: var(--sm-muted) !important;
+		}
+
+		:root[data-theme="dark"] .form-control,
+		:root[data-theme="dark"] .form-select {
+			background-color: var(--sm-panel);
+			color: var(--sm-ink);
+			border-color: var(--sm-line);
+		}
+
+		:root[data-theme="dark"] .form-control::placeholder {
+			color: var(--sm-muted);
+		}
+
+		:root[data-theme="dark"] .table {
+			--bs-table-bg: var(--sm-surface);
+			--bs-table-color: var(--sm-ink);
+			--bs-table-border-color: var(--sm-line);
+		}
+
+		.skip-link {
+			position: absolute;
+			left: 1rem;
+			top: -5rem;
+			z-index: 1100;
+			padding: .75rem 1rem;
+			background: var(--sm-surface);
+			color: var(--sm-ink);
+			border: 1px solid var(--sm-line);
+			border-radius: 8px;
+		}
+
+		.skip-link:focus {
+			top: 1rem;
 		}
 
 		.alert {
@@ -186,6 +270,7 @@
 </head>
 <body>
 	<div class="app-shell">
+		<a class="skip-link" href="#main-content">Saltar al contenido principal</a>
 		<header>
 			<nav class="navbar navbar-expand-lg app-navbar">
 				<div class="container">
@@ -195,17 +280,25 @@
 					</button>
 					<div class="collapse navbar-collapse" id="mainNavbar">
 						<ul class="navbar-nav ms-auto align-items-lg-center gap-lg-2">
+							<li class="nav-item">
+								<button class="btn btn-sm btn-outline-secondary" id="theme-toggle" type="button" aria-label="Activar modo oscuro" aria-pressed="false">Modo oscuro</button>
+							</li>
 							{% if request.user.is_authenticated %}
-								<li class="nav-item">
-									<a class="nav-link" href="{% url 'dashboard' %}">Dashboard</a>
-								</li>
-								{% if request.tenant.schema_name == 'public' %}
+								{% if request.tenant.schema_name != 'public' %}
+									<li class="nav-item">
+										<a class="nav-link" href="{% url 'dashboard' %}">Dashboard</a>
+									</li>
+								{% else %}
 									{% if request.user.is_staff or request.user.is_superuser %}
 										<li class="nav-item">
 											<a class="nav-link" href="{% url 'platform_dashboard' %}">Plataforma</a>
 										</li>
 										<li class="nav-item">
 											<a class="nav-link" href="{% url 'admin:index' %}">Admin tecnico</a>
+										</li>
+									{% else %}
+										<li class="nav-item">
+											<a class="nav-link" href="{% url 'home' %}">Inicio</a>
 										</li>
 									{% endif %}
 								{% endif %}
@@ -216,6 +309,10 @@
 								<li class="nav-item">
 									<a class="nav-link" href="{% url 'home' %}">Inicio</a>
 								</li>
+								{% if request.resolver_match.url_name == "home" %}
+								<li class="nav-item"><a class="nav-link" href="#soluciones">Soluciones</a></li>
+								<li class="nav-item"><a class="nav-link" href="#como-funciona">Cómo funciona</a></li>
+								{% endif %}
 								<li class="nav-item">
 									<a class="btn btn-sm btn-sm-brand" href="{% url 'login' %}">Ingresar</a>
 								</li>
@@ -226,7 +323,7 @@
 			</nav>
 		</header>
 
-		<main class="app-main {% block main_class %}container py-4{% endblock %}">
+		<main id="main-content" class="app-main {% block main_class %}container py-4{% endblock %}" tabindex="-1">
 			{% if messages %}
 				<div class="mb-3">
 					{% for message in messages %}
@@ -269,6 +366,26 @@
 		integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
 		crossorigin="anonymous"
 	></script>
+	<script>
+		(() => {
+			const root = document.documentElement;
+			const toggle = document.getElementById("theme-toggle");
+			const storedTheme = window.localStorage.getItem("systemmanager-theme");
+			const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+			const setTheme = (theme) => {
+				root.dataset.theme = theme;
+				toggle.setAttribute("aria-pressed", String(theme === "dark"));
+				toggle.setAttribute("aria-label", theme === "dark" ? "Activar modo claro" : "Activar modo oscuro");
+				toggle.textContent = theme === "dark" ? "Modo claro" : "Modo oscuro";
+			};
+			setTheme(storedTheme || (prefersDark ? "dark" : "light"));
+			toggle.addEventListener("click", () => {
+				const theme = root.dataset.theme === "dark" ? "light" : "dark";
+				window.localStorage.setItem("systemmanager-theme", theme);
+				setTheme(theme);
+			});
+		})();
+	</script>
 	{% block extra_js %}{% endblock %}
 </body>
 </html>

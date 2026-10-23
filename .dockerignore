@@ -1,0 +1,15 @@
+.git
+.env
+.env.*
+!.env.example
+!.env.prod.example
+.venv
+venv
+__pycache__
+*.py[cod]
+celerybeat-schedule*
+staticfiles
+media
+*.sqlite3
+.pytest_cache
+.mypy_cache

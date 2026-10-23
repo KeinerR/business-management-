@@ -9,6 +9,9 @@
       </div>
     </div>
     <div class="d-flex gap-2">
+      <a class="btn btn-sm btn-success" href="{% url 'cartera_aging_excel_export' %}?type={{ type_filter }}&third_party={{ third_party_filter }}&project={{ project_filter }}">
+        <i class="bi bi-file-earmark-excel"></i> Exportar aging
+      </a>
       <a class="btn btn-sm btn-outline-secondary" href="{% url 'dashboard' %}">Volver</a>
     </div>
   </div>
@@ -16,7 +19,7 @@
   <hr class="my-3"/>
 
   <form method="get" class="row g-2 align-items-end">
-    <div class="col-md-3">
+    <div class="col-md-2">
       <label class="form-label small text-secondary">Tipo</label>
       <select name="type" class="form-select form-select-sm">
         <option value="receivable" {% if type_filter == "receivable" %}selected{% endif %}>Cuentas por cobrar</option>
@@ -24,7 +27,17 @@
       </select>
     </div>
 
-    <div class="col-md-3">
+    <div class="col-md-2">
+      <label class="form-label small text-secondary">Proyecto</label>
+      <select name="project" class="form-select form-select-sm">
+        <option value="">Todos</option>
+        {% for project in projects %}
+          <option value="{{ project.id }}" {% if project_filter|stringformat:"s" == project.id|stringformat:"s" %}selected{% endif %}>{{ project.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-2">
       <label class="form-label small text-secondary">Tercero</label>
       <select name="third_party" class="form-select form-select-sm">
         <option value="" {% if not third_party_filter %}selected{% endif %}>Todos</option>
@@ -52,7 +65,7 @@
       </div>
     </div>
 
-    <div class="col-md-1">
+    <div class="col-md-2">
       <button class="btn btn-sm btn-primary w-100" type="submit">Filtrar</button>
     </div>
   </form>
@@ -62,10 +75,9 @@
       <div class="card shadow-sm">
         <div class="card-body">
           <div class="text-secondary small">Saldo pendiente total</div>
-          <div class="fs-4 fw-semibold">
-            {{ totals.remaining_total }}
-            <span class="text-secondary small">{{ currency_label }}</span>
-          </div>
+          {% for currency, amount in currency_totals %}
+            <div class="fs-5 fw-semibold">{{ amount|floatformat:2 }} <span class="text-secondary small">{{ currency }}</span></div>
+          {% empty %}<div class="fs-5 text-muted">0</div>{% endfor %}
           <div class="text-muted small mt-1">
             Entradas: {{ totals.entry_count }}
           </div>
@@ -77,9 +89,7 @@
       <div class="card shadow-sm border-danger-subtle">
         <div class="card-body">
           <div class="text-secondary small">Vencido (overdue)</div>
-          <div class="fs-4 fw-semibold text-danger">
-            {{ totals.overdue_total }}
-          </div>
+          {% for summary in currency_summary %}{% if summary.overdue %}<div class="fs-5 fw-semibold text-danger">{{ summary.overdue|floatformat:2 }} <span class="small">{{ summary.currency }}</span></div>{% endif %}{% empty %}<div class="fs-5 text-muted">0</div>{% endfor %}
           <div class="text-muted small mt-1">
             Entradas vencidas: {{ totals.overdue_count }}
           </div>
@@ -91,9 +101,7 @@
       <div class="card shadow-sm border-warning-subtle">
         <div class="card-body">
           <div class="text-secondary small">Próximos vencimientos</div>
-          <div class="fs-4 fw-semibold text-warning">
-            {{ totals.next_due_total }}
-          </div>
+          {% for summary in currency_summary %}{% if summary.next_due %}<div class="fs-5 fw-semibold text-warning">{{ summary.next_due|floatformat:2 }} <span class="small">{{ summary.currency }}</span></div>{% endif %}{% empty %}<div class="fs-5 text-muted">0</div>{% endfor %}
           <div class="text-muted small mt-1">
             Próximas entradas: {{ totals.next_due_count }}
           </div>
@@ -118,6 +126,25 @@
 
   <hr class="my-3"/>
 
+  <h5 class="mb-2">Antigüedad de cartera</h5>
+  <div class="table-responsive mb-4">
+    <table class="table table-sm table-bordered align-middle">
+      <thead class="table-light"><tr><th>Moneda</th><th class="text-end">Al día</th><th class="text-end">1–30 días</th><th class="text-end">31–60 días</th><th class="text-end">61–90 días</th><th class="text-end">Más de 90</th></tr></thead>
+      <tbody>
+        {% for aging in currency_aging %}
+        <tr>
+          <th>{{ aging.currency }}</th>
+          <td class="text-end">{{ aging.current|floatformat:2 }}</td>
+          <td class="text-end">{{ aging.days_1_30|floatformat:2 }}</td>
+          <td class="text-end text-warning">{{ aging.days_31_60|floatformat:2 }}</td>
+          <td class="text-end text-danger">{{ aging.days_61_90|floatformat:2 }}</td>
+          <td class="text-end text-danger fw-semibold">{{ aging.days_90_plus|floatformat:2 }}</td>
+        </tr>
+        {% empty %}<tr><td colspan="6" class="text-center text-muted">Sin saldos pendientes.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+
   <h5 class="mb-2">Panel por tercero</h5>
 
   <div class="table-responsive">
@@ -128,6 +155,7 @@
           <th class="text-end">Saldo pendiente</th>
           <th class="text-end text-danger">Overdue</th>
           <th class="text-end text-warning">Próximos</th>
+          <th>Riesgo</th>
           <th>Detalles</th>
         </tr>
       </thead>
@@ -138,6 +166,7 @@
           <td class="text-end">{{ row.remaining_total }}</td>
           <td class="text-end text-danger">{{ row.overdue_total }}</td>
           <td class="text-end text-warning">{{ row.next_due_total }}</td>
+          <td><span class="badge {% if row.risk_key == 'high' %}bg-danger{% elif row.risk_key == 'medium' %}bg-warning text-dark{% else %}bg-success{% endif %}">{{ row.risk_label }}</span>{% if row.oldest_days %}<div class="small text-muted">Máx. {{ row.oldest_days }} días</div>{% endif %}</td>
           <td>
             <div class="small">
               <div class="text-muted">
@@ -179,9 +208,29 @@
         </tr>
         {% empty %}
         <tr>
-          <td colspan="5" class="text-center text-muted py-4">Sin datos para los filtros actuales.</td>
+          <td colspan="6" class="text-center text-muted py-4">Sin datos para los filtros actuales.</td>
         </tr>
         {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h5 class="mt-4 mb-2">Detalle por factura y movimiento</h5>
+  <div class="table-responsive">
+    <table class="table table-sm table-hover align-middle">
+      <thead><tr><th>Documento</th><th>Tercero</th><th>Proyecto</th><th>Vencimiento</th><th>Antigüedad</th><th class="text-end">Saldo</th><th></th></tr></thead>
+      <tbody>
+        {% for entry in entry_rows %}
+        <tr>
+          <td>{% if entry.invoice_number %}<a href="{% url 'invoice_detail' entry.invoice_id %}">{{ entry.invoice_number }}</a>{% else %}{{ entry.concept }}{% endif %}</td>
+          <td>{{ entry.third_party.name|default:"Sin tercero" }}</td>
+          <td>{{ entry.project_name|default:"-" }}</td>
+          <td class="{% if entry.is_overdue %}text-danger{% endif %}">{{ entry.due_date|date:"d/m/Y" }}</td>
+          <td>{% if entry.days_overdue %}{{ entry.days_overdue }} días{% else %}Al día{% endif %}</td>
+          <td class="text-end">{{ entry.remaining|floatformat:2 }} {{ entry.currency }}</td>
+          <td><a class="btn btn-sm btn-outline-success" href="{% url 'payment_create' entry.entry_id %}">Registrar pago</a></td>
+        </tr>
+        {% empty %}<tr><td colspan="7" class="text-center text-muted">Sin movimientos pendientes.</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>

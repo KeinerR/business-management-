@@ -1,11 +1,78 @@
 from datetime import date
 from decimal import Decimal
+from io import BytesIO
+from tempfile import TemporaryDirectory
+import hashlib
+import hmac
+import json
 
 from django_tenants.test.cases import TenantTestCase
+from django_tenants.utils import schema_context
+from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import IntegrityError, transaction
+from django.core.exceptions import ValidationError
+from django.test import override_settings
+from django.template.loader import get_template
+from openpyxl import Workbook
+from rest_framework.test import APIClient
+from unittest.mock import Mock, patch
 
-from businessmanagement.forms import InvoiceForm, QuoteForm, TaxRuleForm
-from businessmanagement.services.banking import _parse_csv_date
-from tenantdata.models import Business, Invoice, Quote, TaxRule
+from businessmanagement.forms import (
+    InvoiceForm,
+    PlatformTenantEditForm,
+    QuoteForm,
+    TaxRuleForm,
+)
+from businessmanagement.services.banking import (
+    _confirm_reconciliation,
+    _parse_csv_date,
+    _rows_from_uploaded_file,
+)
+from businessmanagement.views import (
+    _aging_bucket,
+    _cancel_invoice,
+    _convert_quote_to_invoice,
+    _issue_invoice,
+    _portfolio_risk,
+    _sync_payment_status,
+)
+from businessmanagement.models import Tenant
+from businessmanagement.tasks import deliver_webhook, mark_expired_quotes_for_current_schema
+from businessmanagement.services.notifications import notify_users
+from businessmanagement.services.accounting import PUC_STARTER, seed_puc_starter
+from businessmanagement.services.forecast import budget_performance, cashflow_forecast
+from businessmanagement.services.document_management import add_document_version
+from businessmanagement.services.imports import confirm_batch, preview_batch, read_import_rows, rollback_batch
+from tenantdata.models import (
+    Business,
+    BankAccount,
+    BankStatement,
+    BankTransaction,
+    AuditEvent,
+    FinancialEntry,
+    Invoice,
+    InvoiceItem,
+    Payment,
+    Notification,
+    ApprovalRequest,
+    Account,
+    Budget,
+    BudgetLine,
+    FinancialCategory,
+    Quote,
+    QuoteItem,
+    Reconciliation,
+    TaxRule,
+    ThirdParty,
+    Document,
+    DocumentVersion,
+    ImportBatch,
+    ImportedRecord,
+    WebhookDelivery,
+    WebhookEndpoint,
+)
 
 
 class BusinessFlowTests(TenantTestCase):
@@ -17,6 +84,8 @@ class BusinessFlowTests(TenantTestCase):
             "quotes",
             "taxes",
             "banking",
+            "finances",
+            "third_parties",
         ]
         return tenant
 
@@ -103,3 +172,793 @@ class BusinessFlowTests(TenantTestCase):
         self.assertEqual(_parse_csv_date("22/10/2026"), date(2026, 10, 22))
         self.assertEqual(_parse_csv_date("2026-10-22"), date(2026, 10, 22))
         self.assertIsNone(_parse_csv_date("fecha-invalida"))
+
+    def test_bank_import_reads_excel_headers_and_rows(self):
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(["Fecha", "Monto", "Moneda", "Descripción"])
+        sheet.append(["23/10/2026", -250000, "COP", "Pago proveedor"])
+        content = BytesIO()
+        workbook.save(content)
+        uploaded = SimpleUploadedFile(
+            "extracto.xlsx",
+            content.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+        rows = _rows_from_uploaded_file(uploaded)
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["fecha"], "23/10/2026")
+        self.assertEqual(rows[0]["monto"], -250000)
+        self.assertEqual(rows[0]["descripcion"], "Pago proveedor")
+
+    def test_portfolio_aging_and_risk_classification(self):
+        self.assertEqual(_aging_bucket(0), "current")
+        self.assertEqual(_aging_bucket(30), "days_1_30")
+        self.assertEqual(_aging_bucket(31), "days_31_60")
+        self.assertEqual(_aging_bucket(91), "days_90_plus")
+        self.assertEqual(
+            _portfolio_risk(Decimal("0"), Decimal("100"), 0),
+            ("low", "Bajo"),
+        )
+        self.assertEqual(
+            _portfolio_risk(Decimal("10"), Decimal("100"), 15),
+            ("medium", "Medio"),
+        )
+        self.assertEqual(
+            _portfolio_risk(Decimal("60"), Decimal("100"), 20),
+            ("high", "Alto"),
+        )
+
+    def test_expired_quote_automation_preserves_final_statuses(self):
+        expired_draft = Quote.objects.create(
+            business=self.business,
+            status=Quote.DRAFT,
+            issue_date=date(2026, 9, 1),
+            due_date=date(2026, 9, 30),
+        )
+        converted = Quote.objects.create(
+            business=self.business,
+            status=Quote.CONVERTED,
+            issue_date=date(2026, 9, 1),
+            due_date=date(2026, 9, 30),
+        )
+
+        count = mark_expired_quotes_for_current_schema(date(2026, 10, 23))
+
+        expired_draft.refresh_from_db()
+        converted.refresh_from_db()
+        self.assertEqual(count, 1)
+        self.assertEqual(expired_draft.status, Quote.EXPIRED)
+        self.assertEqual(converted.status, Quote.CONVERTED)
+
+    def test_quote_conversion_copies_totals_and_is_idempotent(self):
+        user = get_user_model().objects.create_user(
+            username="conversion-test", password="test-password"
+        )
+        iva = TaxRule.objects.create(
+            business=self.business,
+            name="IVA 19%",
+            rule_type=TaxRule.IVA,
+            percentage=Decimal("19.00"),
+        )
+        retention = TaxRule.objects.create(
+            business=self.business,
+            name="Retefuente 2.5%",
+            rule_type=TaxRule.RETENCION_FUENTE,
+            percentage=Decimal("2.50"),
+        )
+        quote = Quote.objects.create(
+            business=self.business,
+            status=Quote.ACCEPTED,
+            issue_date=date(2026, 10, 23),
+            due_date=date(2026, 11, 23),
+            created_by=user,
+        )
+        quote.tax_rules.set([iva, retention])
+        QuoteItem.objects.create(
+            quote=quote,
+            description="Servicio de implementación",
+            quantity=Decimal("2.00"),
+            unit_price=Decimal("50.00"),
+            subtotal=Decimal("100.00"),
+        )
+        quote.calculate_totals(Decimal("100.00"))
+        quote.save(
+            update_fields=["subtotal", "tax_amount", "retention_amount", "total"]
+        )
+
+        invoice, financial_entry = _convert_quote_to_invoice(quote, user)
+        second_invoice, second_entry = _convert_quote_to_invoice(quote, user)
+
+        self.assertEqual(invoice.pk, second_invoice.pk)
+        self.assertEqual(financial_entry.pk, second_entry.pk)
+        self.assertEqual(Invoice.objects.count(), 1)
+        self.assertEqual(InvoiceItem.objects.count(), 1)
+        self.assertEqual(FinancialEntry.objects.count(), 1)
+        self.assertEqual(invoice.subtotal, Decimal("100.00"))
+        self.assertEqual(invoice.tax_amount, Decimal("19.00"))
+        self.assertEqual(invoice.retention_amount, Decimal("2.50"))
+        self.assertEqual(invoice.total, Decimal("116.50"))
+        self.assertEqual(financial_entry.amount, invoice.total)
+        self.assertEqual(invoice.tax_rules.count(), 2)
+        self.assertEqual(quote.status, Quote.CONVERTED)
+
+    def test_payment_status_marks_linked_invoice_as_paid(self):
+        entry = FinancialEntry.objects.create(
+            business=self.business,
+            entry_type=FinancialEntry.ACCOUNT_RECEIVABLE,
+            status=FinancialEntry.PENDING,
+            concept="Factura de prueba",
+            amount=Decimal("100.00"),
+            currency="COP",
+            entry_date=date(2026, 10, 23),
+        )
+        invoice = Invoice.objects.create(
+            business=self.business,
+            financial_entry=entry,
+            status=Invoice.ISSUED,
+            issue_date=date(2026, 10, 23),
+        )
+
+        _sync_payment_status(entry, Decimal("40.00"))
+        invoice.refresh_from_db()
+        self.assertEqual(entry.status, FinancialEntry.PARTIAL)
+        self.assertEqual(invoice.status, Invoice.ISSUED)
+
+        _sync_payment_status(entry, Decimal("100.00"))
+        invoice.refresh_from_db()
+        self.assertEqual(entry.status, FinancialEntry.PAID)
+        self.assertEqual(invoice.status, Invoice.PAID)
+
+    def test_manual_reconciliation_creates_payment_and_updates_status(self):
+        user = get_user_model().objects.create_user(username="bank-user")
+        account = BankAccount.objects.create(
+            business=self.business,
+            name="Cuenta principal",
+            base_currency="COP",
+        )
+        statement = BankStatement.objects.create(
+            bank_account=account, created_by=user, source="xlsx"
+        )
+        bank_transaction = BankTransaction.objects.create(
+            statement=statement,
+            transaction_date=date(2026, 10, 23),
+            description="Pago factura",
+            amount=Decimal("100.00"),
+            currency="COP",
+            direction="in",
+        )
+        entry = FinancialEntry.objects.create(
+            business=self.business,
+            entry_type=FinancialEntry.ACCOUNT_RECEIVABLE,
+            status=FinancialEntry.PENDING,
+            concept="Factura de prueba",
+            amount=Decimal("100.00"),
+            currency="COP",
+            entry_date=date(2026, 10, 23),
+        )
+        reconciliation = Reconciliation.objects.create(
+            bank_transaction=bank_transaction,
+            financial_entry=entry,
+            status=Reconciliation.PROPOSED,
+        )
+
+        _confirm_reconciliation(reconciliation, user)
+
+        reconciliation.refresh_from_db()
+        bank_transaction.refresh_from_db()
+        entry.refresh_from_db()
+        self.assertIsNotNone(reconciliation.payment_id)
+        self.assertEqual(reconciliation.status, Reconciliation.CONFIRMED)
+        self.assertEqual(bank_transaction.status, BankTransaction.RECONCILED)
+        self.assertEqual(entry.status, FinancialEntry.PAID)
+
+    def test_invoice_issue_creates_single_receivable(self):
+        user = get_user_model().objects.create_user(username="invoice-user")
+        invoice = Invoice.objects.create(
+            business=self.business,
+            status=Invoice.DRAFT,
+            issue_date=date(2026, 10, 23),
+            due_date=date(2026, 11, 23),
+            subtotal=Decimal("100.00"),
+            total=Decimal("100.00"),
+        )
+        InvoiceItem.objects.create(
+            invoice=invoice,
+            description="Servicio",
+            quantity=Decimal("1.00"),
+            unit_price=Decimal("100.00"),
+            subtotal=Decimal("100.00"),
+        )
+
+        entry = _issue_invoice(invoice, user)
+        second_entry = _issue_invoice(invoice, user)
+
+        invoice.refresh_from_db()
+        self.assertEqual(entry.pk, second_entry.pk)
+        self.assertEqual(invoice.status, Invoice.ISSUED)
+        self.assertEqual(invoice.financial_entry_id, entry.pk)
+        self.assertEqual(entry.entry_type, FinancialEntry.ACCOUNT_RECEIVABLE)
+        self.assertEqual(entry.amount, invoice.total)
+        self.assertEqual(FinancialEntry.objects.count(), 1)
+
+    def test_invoice_with_payments_cannot_be_cancelled(self):
+        entry = FinancialEntry.objects.create(
+            business=self.business,
+            entry_type=FinancialEntry.ACCOUNT_RECEIVABLE,
+            status=FinancialEntry.PARTIAL,
+            concept="Factura con abono",
+            amount=Decimal("100.00"),
+            currency="COP",
+            entry_date=date(2026, 10, 23),
+        )
+        invoice = Invoice.objects.create(
+            business=self.business,
+            financial_entry=entry,
+            status=Invoice.ISSUED,
+            issue_date=date(2026, 10, 23),
+        )
+        Payment.objects.create(
+            financial_entry=entry,
+            payment_date=date(2026, 10, 23),
+            amount=Decimal("20.00"),
+            currency="COP",
+        )
+
+        with self.assertRaisesMessage(ValueError, "nota crédito"):
+            _cancel_invoice(invoice)
+
+        invoice.refresh_from_db()
+        entry.refresh_from_db()
+        self.assertEqual(invoice.status, Invoice.ISSUED)
+        self.assertEqual(entry.status, FinancialEntry.PARTIAL)
+
+    def test_notifications_are_deduplicated_per_recipient(self):
+        admin = get_user_model().objects.create_superuser(
+            username="notification-admin", password="test-password"
+        )
+
+        notify_users(
+            title="Factura vencida",
+            message="Primer mensaje",
+            entity="invoice",
+            entity_id="10",
+            dedupe_key="invoice-overdue-10",
+        )
+        notify_users(
+            title="Factura vencida",
+            message="Mensaje actualizado",
+            entity="invoice",
+            entity_id="10",
+            dedupe_key="invoice-overdue-10",
+        )
+
+        notifications = Notification.objects.filter(recipient=admin)
+        self.assertEqual(notifications.count(), 1)
+        self.assertEqual(notifications.get().message, "Mensaje actualizado")
+
+    def test_only_one_pending_approval_is_allowed_per_document(self):
+        user = get_user_model().objects.create_user(username="requester")
+        quote = Quote.objects.create(
+            business=self.business,
+            issue_date=date(2026, 10, 23),
+            total=Decimal("500.00"),
+        )
+        ApprovalRequest.objects.create(
+            business=self.business,
+            entity_type=ApprovalRequest.QUOTE,
+            entity_id=quote.pk,
+            title=quote.quote_number,
+            amount=quote.total,
+            currency=quote.currency,
+            requested_by=user,
+        )
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                ApprovalRequest.objects.create(
+                    business=self.business,
+                    entity_type=ApprovalRequest.QUOTE,
+                    entity_id=quote.pk,
+                    title=quote.quote_number,
+                    requested_by=user,
+                )
+
+        first = ApprovalRequest.objects.get(entity_id=quote.pk)
+        first.status = ApprovalRequest.APPROVED
+        first.save(update_fields=["status"])
+        replacement = ApprovalRequest.objects.create(
+            business=self.business,
+            entity_type=ApprovalRequest.QUOTE,
+            entity_id=quote.pk,
+            title=quote.quote_number,
+            requested_by=user,
+        )
+        self.assertEqual(replacement.status, ApprovalRequest.PENDING)
+
+    def test_puc_seed_is_idempotent_and_hierarchical(self):
+        created, total = seed_puc_starter(self.business)
+        created_again, total_again = seed_puc_starter(self.business)
+
+        self.assertEqual(created, len(PUC_STARTER))
+        self.assertEqual(total, len(PUC_STARTER))
+        self.assertEqual(created_again, 0)
+        self.assertEqual(total_again, total)
+        self.assertEqual(Account.objects.count(), total)
+        cash = Account.objects.get(code="110505")
+        self.assertEqual(cash.parent.code, "1105")
+        self.assertTrue(cash.accepts_entries)
+
+    def test_account_code_must_extend_parent_code(self):
+        parent = Account.objects.create(
+            business=self.business,
+            code="1",
+            name="Activo",
+            account_type=Account.ASSET,
+            nature=Account.DEBIT,
+            accepts_entries=False,
+        )
+        invalid = Account(
+            business=self.business,
+            code="2205",
+            name="Cuenta inválida",
+            account_type=Account.ASSET,
+            nature=Account.DEBIT,
+            parent=parent,
+        )
+
+        with self.assertRaises(ValidationError):
+            invalid.full_clean()
+
+    def test_budget_performance_compares_expenses_by_category(self):
+        category = FinancialCategory.objects.create(
+            business=self.business, name="Servicios", category_type=FinancialCategory.EXPENSE
+        )
+        budget = Budget.objects.create(
+            business=self.business,
+            name="Presupuesto Q4",
+            period_start_date=date(2026, 10, 1),
+            period_end_date=date(2026, 12, 31),
+            currency="COP",
+        )
+        BudgetLine.objects.create(
+            budget=budget,
+            category=category,
+            concept="Servicios",
+            budgeted_amount=Decimal("1000.00"),
+            currency="COP",
+        )
+        FinancialEntry.objects.create(
+            business=self.business,
+            category=category,
+            entry_type=FinancialEntry.EXPENSE,
+            status=FinancialEntry.PAID,
+            concept="Hosting",
+            amount=Decimal("850.00"),
+            currency="COP",
+            entry_date=date(2026, 10, 23),
+        )
+
+        rows, totals = budget_performance(budget)
+
+        self.assertEqual(rows[0]["actual"], Decimal("850.00"))
+        self.assertEqual(rows[0]["variance"], Decimal("150.00"))
+        self.assertEqual(rows[0]["risk"], "warning")
+        self.assertEqual(totals[0]["budgeted"], Decimal("1000.00"))
+
+    def test_cashflow_forecast_uses_remaining_portfolio_balance(self):
+        receivable = FinancialEntry.objects.create(
+            business=self.business,
+            entry_type=FinancialEntry.ACCOUNT_RECEIVABLE,
+            status=FinancialEntry.PARTIAL,
+            concept="Cliente",
+            amount=Decimal("1000.00"),
+            currency="COP",
+            entry_date=date(2026, 10, 1),
+            due_date=date(2026, 11, 15),
+        )
+        Payment.objects.create(
+            financial_entry=receivable,
+            payment_date=date(2026, 10, 20),
+            amount=Decimal("250.00"),
+            currency="COP",
+        )
+        FinancialEntry.objects.create(
+            business=self.business,
+            entry_type=FinancialEntry.ACCOUNT_PAYABLE,
+            status=FinancialEntry.PENDING,
+            concept="Proveedor",
+            amount=Decimal("300.00"),
+            currency="COP",
+            entry_date=date(2026, 10, 1),
+            due_date=date(2026, 11, 20),
+        )
+
+        rows = cashflow_forecast(
+            self.business, date(2026, 11, 1), date(2026, 11, 30)
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["incoming"], Decimal("750.00"))
+        self.assertEqual(rows[0]["outgoing"], Decimal("300.00"))
+        self.assertEqual(rows[0]["net"], Decimal("450.00"))
+
+    def test_document_versions_are_sequential_and_keep_metadata(self):
+        user = get_user_model().objects.create_user(username="document-user")
+        document = Document.objects.create(
+            business=self.business,
+            title="Contrato proveedor",
+            document_type=Document.CONTRACT,
+            created_by=user,
+        )
+        with TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            first = add_document_version(
+                document,
+                SimpleUploadedFile("contrato.pdf", b"version uno", content_type="application/pdf"),
+                user,
+                "Original",
+            )
+            second = add_document_version(
+                document,
+                SimpleUploadedFile("contrato firmado.pdf", b"version dos", content_type="application/pdf"),
+                user,
+                "Firmado",
+            )
+
+            self.assertEqual((first.version, second.version), (1, 2))
+            self.assertEqual(DocumentVersion.objects.filter(document=document).count(), 2)
+            self.assertEqual(second.original_name, "contrato firmado.pdf")
+            self.assertEqual(second.notes, "Firmado")
+
+    def test_document_version_number_cannot_be_repeated(self):
+        document = Document.objects.create(
+            business=self.business,
+            title="Política interna",
+            document_type=Document.HR,
+        )
+        DocumentVersion.objects.create(document=document, version=1, file="documents/test.pdf", original_name="test.pdf")
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                DocumentVersion.objects.create(document=document, version=1, file="documents/test2.pdf", original_name="test2.pdf")
+
+    def test_generic_import_preview_confirm_and_rollback(self):
+        user = get_user_model().objects.create_user(username="import-user")
+        batch = ImportBatch.objects.create(
+            business=self.business,
+            created_by=user,
+            file_name="terceros.csv",
+            target_model=ImportBatch.THIRD_PARTY,
+            total_rows=2,
+        )
+        ImportedRecord.objects.create(batch=batch, row_data={"name": "Proveedor Uno", "identification": "900001", "third_party_type": "supplier", "email": "compras@example.com"})
+        ImportedRecord.objects.create(batch=batch, row_data={"name": "", "identification": "900002", "email": "correo-invalido"})
+
+        preview_batch(batch)
+        batch.refresh_from_db()
+        self.assertEqual(batch.status, ImportBatch.PREVIEWED)
+        self.assertEqual(batch.processed_rows, 1)
+        self.assertEqual(batch.failed_rows, 1)
+
+        confirm_batch(batch)
+        batch.refresh_from_db()
+        self.assertEqual(batch.status, ImportBatch.CONFIRMED)
+        self.assertTrue(ThirdParty.objects.filter(identification="900001").exists())
+        self.assertEqual(batch.records.filter(status=ImportedRecord.PROCESSED).count(), 1)
+
+        rollback_batch(batch, user)
+        batch.refresh_from_db()
+        self.assertEqual(batch.status, ImportBatch.ROLLED_BACK)
+        self.assertFalse(ThirdParty.objects.filter(identification="900001").exists())
+        self.assertEqual(batch.records.filter(status=ImportedRecord.ROLLED_BACK).count(), 1)
+
+    def test_generic_csv_reader_normalizes_headers_and_skips_empty_rows(self):
+        uploaded = SimpleUploadedFile(
+            "movimientos.csv",
+            "Concepto;Monto;Fecha\nHosting;125000,50;23/10/2026\n;;\n".encode("utf-8"),
+            content_type="text/csv",
+        )
+
+        rows = read_import_rows(uploaded, ";")
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["concepto"], "Hosting")
+        self.assertEqual(rows[0]["monto"], "125000,50")
+
+    def test_import_validation_rejects_missing_tenant_relations(self):
+        batch = ImportBatch.objects.create(
+            business=self.business,
+            file_name="movimientos.xlsx",
+            target_model=ImportBatch.FINANCIAL_ENTRY,
+            total_rows=1,
+        )
+        record = ImportedRecord.objects.create(batch=batch, row_data={
+            "concept": "Compra",
+            "amount": "1000",
+            "entry_type": FinancialEntry.EXPENSE,
+            "entry_date": "2026-10-23",
+            "currency": "COP",
+            "category": "Categoría inexistente",
+        })
+
+        preview_batch(batch)
+        record.refresh_from_db()
+
+        self.assertEqual(record.status, ImportedRecord.INVALID)
+        self.assertTrue(any("no existe" in error for error in record.validation_errors))
+
+    def test_generic_import_templates_compile(self):
+        for template_name in (
+            "tenant/generic_import_upload.html",
+            "tenant/generic_import_preview.html",
+            "tenant/generic_import_batch_list.html",
+            "tenant/generic_import_batch_detail.html",
+        ):
+            self.assertIsNotNone(get_template(template_name))
+
+    def test_public_landing_is_informative_without_sample_customer_data(self):
+        response = APIClient(HTTP_HOST=self.domain.domain).get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Tu negocio, con las cuentas")
+        self.assertContains(response, "Finanzas y cartera")
+        self.assertContains(response, "Facturas y cotizaciones")
+        self.assertContains(response, "Vista ilustrativa")
+        self.assertNotContains(response, "Public master online")
+        self.assertNotContains(response, "Venta diaria sucursal norte")
+        self.assertNotContains(response, "Tenant de pruebas")
+
+    def test_authenticated_tenant_user_returns_to_dashboard_from_landing(self):
+        client = APIClient(HTTP_HOST=self.domain.domain)
+        client.force_login(get_user_model().objects.create_user(username="home-user"))
+
+        response = client.get("/")
+
+        self.assertRedirects(response, "/dashboard/", fetch_redirect_response=False)
+
+    def test_tenant_dashboard_renders_for_business_and_individual_tenants(self):
+        client = APIClient(HTTP_HOST=self.domain.domain)
+        client.force_login(
+            get_user_model().objects.create_user(username="dashboard-user")
+        )
+
+        business_response = client.get("/dashboard/")
+        self.assertEqual(business_response.status_code, 200)
+        self.assertContains(business_response, "Dashboard de empresa")
+        self.assertContains(business_response, "Ingresos y egresos del mes")
+        self.assertContains(business_response, 'id="theme-toggle"')
+        self.assertContains(business_response, 'class="skip-link"')
+
+        self.tenant.tenant_type = "individual"
+        self.tenant.save(update_fields=("tenant_type",))
+        individual_response = client.get("/dashboard/")
+        self.assertEqual(individual_response.status_code, 200)
+        self.assertContains(individual_response, "Panel financiero personal")
+        self.assertNotContains(individual_response, "Crear empleado")
+
+    def test_platform_tenant_form_persists_service_follow_up_fields(self):
+        form = PlatformTenantEditForm(
+            instance=self.tenant,
+            data={
+                "name": self.tenant.name,
+                "domain": self.domain.domain,
+                "is_active": "on",
+                "enabled_modules": ["finances"],
+                "service_plan": "Profesional",
+                "service_status": Tenant.SERVICE_PAST_DUE,
+                "renewal_date": "2026-11-23",
+                "platform_notes": "Contactar para revisar renovación.",
+            },
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        updated_tenant = form.save()
+
+        self.assertEqual(updated_tenant.service_plan, "Profesional")
+        self.assertEqual(updated_tenant.service_status, Tenant.SERVICE_PAST_DUE)
+        self.assertEqual(updated_tenant.renewal_date.isoformat(), "2026-11-23")
+        self.assertEqual(
+            updated_tenant.platform_notes, "Contactar para revisar renovación."
+        )
+
+    def test_suspended_service_status_disables_tenant_access(self):
+        form = PlatformTenantEditForm(
+            instance=self.tenant,
+            data={
+                "name": self.tenant.name,
+                "domain": self.domain.domain,
+                "is_active": "on",
+                "enabled_modules": ["finances"],
+                "service_plan": "Profesional",
+                "service_status": Tenant.SERVICE_SUSPENDED,
+                "renewal_date": "",
+                "platform_notes": "",
+            },
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+        form.save()
+
+        response = APIClient(HTTP_HOST=self.domain.domain).get("/dashboard/")
+
+        self.assertFalse(self.tenant.__class__.objects.get(pk=self.tenant.pk).is_active)
+        self.assertEqual(response.status_code, 403)
+
+    def test_platform_tenant_detail_template_compiles(self):
+        self.assertIsNotNone(get_template("platform/tenant_detail.html"))
+
+    def test_suspended_tenant_blocks_access_with_a_clear_message(self):
+        self.tenant.is_active = False
+        self.tenant.save(update_fields=("is_active",))
+
+        response = APIClient(HTTP_HOST=self.domain.domain).get("/dashboard/")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertContains(
+            response, "Este espacio no está disponible", status_code=403
+        )
+
+    def test_health_check_reports_database_connectivity(self):
+        response = APIClient(HTTP_HOST=self.domain.domain).get("/health/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ok"})
+
+
+    def test_api_financial_entry_create_is_idempotent_and_audited(self):
+        user = get_user_model().objects.create_user(username="api-finance-user")
+        user.groups.add(Group.objects.create(name="Operador financiero"))
+        client = APIClient(HTTP_HOST=self.domain.domain)
+        client.force_authenticate(user)
+        payload = {
+            "business": self.business.pk,
+            "entry_type": FinancialEntry.INCOME,
+            "concept": "Venta API",
+            "amount": "125000.00",
+            "currency": "COP",
+            "entry_date": "2026-10-23",
+        }
+        headers = {"HTTP_IDEMPOTENCY_KEY": "venta-api-001"}
+
+        first = client.post("/api/v1/financial-entries/", payload, format="json", **headers)
+        replay = client.post("/api/v1/financial-entries/", payload, format="json", **headers)
+        conflict = client.post(
+            "/api/v1/financial-entries/",
+            {**payload, "amount": "130000.00"},
+            format="json",
+            **headers,
+        )
+
+        self.assertEqual(first.status_code, 201, first.data)
+        self.assertEqual(replay.status_code, 201, replay.data)
+        self.assertEqual(first.data["id"], replay.data["id"])
+        self.assertEqual(conflict.status_code, 409)
+        self.assertEqual(FinancialEntry.objects.count(), 1)
+        self.assertTrue(
+            AuditEvent.objects.filter(
+                entity="financial_entry",
+                entity_id=str(first.data["id"]),
+                actor=user,
+            ).exists()
+        )
+
+    def test_api_webhook_endpoints_hide_secret_and_record_dispatch(self):
+        user = get_user_model().objects.create_user(username="api-webhook-user")
+        user.groups.add(Group.objects.create(name="Administrador de empresa"))
+        client = APIClient(HTTP_HOST=self.domain.domain)
+        client.force_authenticate(user)
+        response = client.post(
+            "/api/v1/webhooks/",
+            {
+                "name": "ERP externo",
+                "url": "https://hooks.example.com/systemmanager",
+                "secret": "secret-for-signing",
+                "event_types": ["financial_entry.created"],
+                "is_active": True,
+            },
+            format="json",
+            HTTP_IDEMPOTENCY_KEY="webhook-api-001",
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertNotIn("secret", response.data)
+        endpoint = WebhookEndpoint.objects.get(pk=response.data["id"])
+        with (
+            patch(
+                "businessmanagement.services.webhooks.transaction.on_commit",
+                side_effect=lambda callback: callback(),
+            ),
+            patch("businessmanagement.tasks.deliver_webhook.delay") as enqueue,
+        ):
+            from businessmanagement.services.webhooks import dispatch_webhook_event
+
+            dispatch_webhook_event(
+                "financial_entry.created",
+                {"id": 42, "concept": "Venta"},
+            )
+
+        delivery = WebhookDelivery.objects.get(endpoint=endpoint)
+        self.assertEqual(delivery.status, WebhookDelivery.PENDING)
+        self.assertEqual(delivery.payload["id"], 42)
+        enqueue.assert_called_once_with(delivery.pk, self.tenant.schema_name)
+
+    def test_webhook_delivery_is_signed_and_records_success(self):
+        endpoint = WebhookEndpoint.objects.create(
+            name="ERP de prueba",
+            url="https://hooks.example.com/events",
+            secret="signing-secret",
+            event_types=["payment.registered"],
+        )
+        payload = {"payment_id": 17, "amount": "25000.00"}
+        delivery = WebhookDelivery.objects.create(
+            endpoint=endpoint,
+            event="payment.registered",
+            target_url=endpoint.url,
+            payload=payload,
+        )
+        response = Mock(status_code=204, text="accepted")
+
+        with (
+            patch("businessmanagement.tasks._ensure_public_webhook_destination"),
+            patch("businessmanagement.tasks.requests.post", return_value=response) as post,
+            schema_context("public"),
+        ):
+            result = deliver_webhook.run(delivery.pk, self.tenant.schema_name)
+
+        body = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode()
+        expected_signature = hmac.new(
+            b"signing-secret", body, hashlib.sha256
+        ).hexdigest()
+        self.assertEqual(result, WebhookDelivery.DELIVERED)
+        self.assertEqual(post.call_args.kwargs["data"], body)
+        self.assertEqual(
+            post.call_args.kwargs["headers"]["X-SystemManager-Signature"],
+            f"sha256={expected_signature}",
+        )
+        delivery.refresh_from_db()
+        self.assertEqual(delivery.status, WebhookDelivery.DELIVERED)
+        self.assertEqual(delivery.attempts, 1)
+        self.assertEqual(delivery.response_status, 204)
+
+    def test_webhook_delivery_rejects_private_network_addresses(self):
+        from businessmanagement.tasks import _ensure_public_webhook_destination
+
+        with self.assertRaises(ValueError):
+            _ensure_public_webhook_destination("https://10.0.0.2/private")
+
+    def test_model_signals_publish_required_webhook_events(self):
+        with patch("tenantdata.signals.dispatch_webhook_event") as dispatch:
+            entry = FinancialEntry.objects.create(
+                business=self.business,
+                entry_type=FinancialEntry.ACCOUNT_RECEIVABLE,
+                concept="Cuenta por cobrar",
+                amount=Decimal("50000.00"),
+                currency="COP",
+                entry_date=date(2026, 10, 23),
+            )
+            invoice = Invoice.objects.create(
+                business=self.business,
+                issue_date=date(2026, 10, 23),
+                total=Decimal("50000.00"),
+            )
+            invoice.status = Invoice.PAID
+            invoice.save(update_fields=("status",))
+            Payment.objects.create(
+                financial_entry=entry,
+                payment_date=date(2026, 10, 23),
+                amount=Decimal("50000.00"),
+                currency="COP",
+            )
+
+        self.assertEqual(
+            [call.args[0] for call in dispatch.call_args_list],
+            [
+                "financial_entry.created",
+                "invoice.created",
+                "invoice.paid",
+                "payment.registered",
+            ],
+        )

@@ -14,7 +14,7 @@
 	.platform-main,
 	.platform-card {
 		border: 1px solid var(--sm-line);
-		background: #fff;
+		background: var(--sm-surface);
 		border-radius: 8px;
 	}
 
@@ -104,7 +104,7 @@
 		<h1 class="h4 mb-1">Plataforma</h1>
 		<p class="text-secondary small mb-3">Gestion global de tenants, dominios y empresas base.</p>
 		<a class="platform-link" href="{% url 'platform_dashboard' %}"><span>Resumen</span><small>Global</small></a>
-		<a class="platform-link" href="{% url 'platform_tenant_list' %}"><span>Tenants</span><small>Empresas</small></a>
+		<a class="platform-link" href="{% url 'platform_tenant_list' %}"><span>Clientes y tenants</span><small>Seguimiento</small></a>
 		<a class="platform-link" href="{% url 'platform_tenant_create' %}"><span>Crear tenant</span><small>Nuevo</small></a>
 	</aside>
 

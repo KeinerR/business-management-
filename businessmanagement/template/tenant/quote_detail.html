@@ -13,7 +13,20 @@
             <a href="{% url 'quote_list' %}" class="btn btn-secondary">
                 <i class="bi bi-arrow-left"></i> Volver
             </a>
+            <a href="{% url 'quote_pdf' quote.id %}" class="btn btn-danger">
+                <i class="bi bi-file-pdf"></i> Descargar PDF
+            </a>
             {% if quote.status == 'draft' %}
+                <a href="{% url 'quote_edit' quote.id %}" class="btn btn-warning">
+                    <i class="bi bi-pencil"></i> Editar
+                </a>
+                {% if "approvals" in request.tenant.enabled_modules %}
+                  {% if approval %}
+                    <a href="{% url 'approval_detail' approval.id %}" class="btn btn-outline-primary">Aprobación: {{ approval.get_status_display }}</a>
+                  {% else %}
+                    <a href="{% url 'approval_request_create' 'quote' quote.id %}" class="btn btn-outline-primary">Solicitar aprobación</a>
+                  {% endif %}
+                {% endif %}
                 <form method="post" action="{% url 'quote_accept' quote.id %}" style="display:inline;" onsubmit="return confirm('¿Aceptar la cotización?');">
                     {% csrf_token %}
                     <button type="submit" class="btn btn-success">
@@ -85,7 +98,7 @@
                         <div class="col-md-6">
                             <h6 class="text-muted">Estado</h6>
                             <p>
-                                <span class="badge bg-{% if quote.status == 'draft' %}secondary{% elif quote.status == 'accepted' %}info{% elif quote.status == 'converted' %}success{% elif quote.status == 'cancelled' %}dark{% endif %}">
+                                <span class="badge bg-{% if quote.status == 'draft' %}secondary{% elif quote.status == 'accepted' %}info{% elif quote.status == 'converted' %}success{% elif quote.status == 'expired' %}danger{% elif quote.status == 'cancelled' %}dark{% endif %}">
                                     {{ quote.get_status_display }}
                                 </span>
                             </p>
@@ -182,14 +195,28 @@
                         </div>
                     </div>
 
-                    <div class="row mb-3">
+                    <div class="row mb-2">
                         <div class="col-6">
-                            <p class="text-muted mb-0">IVA ({{ quote.tax_percentage }}%):</p>
+                            <p class="text-muted mb-0">Impuestos:</p>
                         </div>
                         <div class="col-6 text-end">
                             <p class="mb-0">${{ quote.tax_amount|floatformat:2 }}</p>
                         </div>
                     </div>
+                    {% for rule in quote.tax_rules.all %}
+                        <div class="small text-muted d-flex justify-content-between mb-1">
+                            <span>{{ rule.name }}</span><span>{{ rule.percentage }}%</span>
+                        </div>
+                    {% empty %}
+                        <p class="small text-muted">Sin reglas tributarias aplicadas.</p>
+                    {% endfor %}
+
+                    {% if quote.retention_amount %}
+                        <div class="row mt-3 mb-2">
+                            <div class="col-6"><p class="text-muted mb-0">Retenciones:</p></div>
+                            <div class="col-6 text-end"><p class="mb-0">-${{ quote.retention_amount|floatformat:2 }}</p></div>
+                        </div>
+                    {% endif %}
 
                     <hr>
 

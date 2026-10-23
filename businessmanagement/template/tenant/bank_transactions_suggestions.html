@@ -1,5 +1,5 @@
 {% extends "tenant/base.html" %}
-{% block content %}
+{% block workspace_content %}
 <div class="container mt-4">
   <div class="d-flex align-items-center justify-content-between mb-3">
     <h3>Conciliación - Sugerencias</h3>
@@ -14,19 +14,26 @@
       <div><strong>Moneda base:</strong> {{ statement.bank_account.base_currency|default:"" }}</div>
       <div><strong>Fecha desde:</strong> {{ statement.statement_date_from|default:"-" }}</div>
       <div><strong>Fecha hasta:</strong> {{ statement.statement_date_to|default:"-" }}</div>
-      <div class="text-muted small mt-2">
-        En MVP: el match se propone contra <code>Payment</code> por ventana ±3 días, moneda y monto exacto.
-      </div>
+      <div class="text-muted small mt-2">Las sugerencias comparan fecha, moneda, monto y concepto. También puede seleccionar manualmente un pago o movimiento.</div>
     </div>
   </div>
 
   {% if transactions.count == 0 %}
     <div class="alert alert-warning">No hay transacciones importadas.</div>
   {% else %}
+    <form id="bulk-confirm-form" method="post" action="{% url 'reconciliation_bulk_confirm' statement.id %}">
+      {% csrf_token %}
+    </form>
+    <div class="mb-3">
+      <button type="submit" form="bulk-confirm-form" class="btn btn-success btn-sm">
+        <i class="bi bi-check2-all"></i> Confirmar seleccionadas
+      </button>
+    </div>
     <div class="table-responsive">
       <table class="table table-sm table-striped align-middle">
         <thead>
           <tr>
+            <th><span class="visually-hidden">Seleccionar</span></th>
             <th>Fecha</th>
             <th>Descripción</th>
             <th>Monto</th>
@@ -36,31 +43,30 @@
           </tr>
         </thead>
         <tbody>
-          {% for tx in transactions %}
-            {% with rec=reconciliations|default_if_none:"" %}
-            {% endwith %}
-            {# Como reconciliations se arma por tx con get_or_create, buscamos por payment/tx en backend.
-               Para MVP mostramos solo el primer match sugerido si existe. #}
-            {% for r in reconciliations %}
-              {% if r.bank_transaction_id == tx.id %}
+          {% for row in transaction_rows %}
+            {% with tx=row.transaction r=row.reconciliation %}
                 <tr>
+                  <td>{% if r and r.status == 'proposed' %}<input class="form-check-input" form="bulk-confirm-form" type="checkbox" name="reconciliation_ids" value="{{ r.id }}">{% endif %}</td>
                   <td>{{ tx.transaction_date }}</td>
-                  <td>{{ tx.concept|default:tx.description }}</td>
-                  <td>{{ tx.amount }}</td>
+                  <td>{{ tx.description|default:tx.concept }}</td>
+                  <td>{% if tx.direction == 'out' %}-{% endif %}{{ tx.amount }}</td>
                   <td>{{ tx.currency }}</td>
                   <td>
-                    {% if r.status == "proposed" or r.status == 0 %}
+                    {% if r %}
+                    {% if r.status == "proposed" %}
                       Propuesto (conf: {{ r.match_confidence|default:"-" }})
                     {% else %}
-                      {{ r.get_status_display|default:r.status }}
+                      {{ r.get_status_display }}
                     {% endif %}
                     {% if r.payment %}
                       <div class="small text-muted">
                         Payment: {{ r.payment.id }} ({{ r.payment.payment_date }} / {{ r.payment.amount }} {{ r.payment.currency }})
                       </div>
                     {% endif %}
+                    {% else %}<span class="text-muted">Sin sugerencia</span>{% endif %}
                   </td>
                   <td>
+                    {% if r and r.status == 'proposed' %}
                     <form method="post" action="{% url 'reconciliation_confirm' r.id %}">
                       {% csrf_token %}
                       <input type="hidden" name="reconciliation_id" value="{{ r.id }}">
@@ -69,20 +75,24 @@
                         <button type="submit" name="action" value="reject" class="btn btn-outline-danger btn-sm">Rechazar</button>
                       </div>
                     </form>
+                    {% elif not r %}
+                    <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="collapse" data-bs-target="#manual-{{ tx.id }}">Enlazar manualmente</button>
+                    {% endif %}
                   </td>
                 </tr>
-                {% break %}
-              {% endif %}
-            {% empty %}
-              <tr>
-                <td>{{ tx.transaction_date }}</td>
-                <td>{{ tx.concept|default:tx.description }}</td>
-                <td>{{ tx.amount }}</td>
-                <td>{{ tx.currency }}</td>
-                <td class="text-muted">Sin sugerencias</td>
-                <td class="text-muted">-</td>
-              </tr>
-            {% endfor %}
+                {% if not r %}
+                <tr class="collapse" id="manual-{{ tx.id }}">
+                  <td colspan="7">
+                    <form method="post" action="{% url 'reconciliation_manual' tx.id %}" class="row g-2 align-items-end">
+                      {% csrf_token %}
+                      <div class="col-md-5"><label class="form-label">Pago existente</label>{{ row.manual_form.payment }}</div>
+                      <div class="col-md-5"><label class="form-label">O movimiento pendiente</label>{{ row.manual_form.financial_entry }}</div>
+                      <div class="col-md-2"><button class="btn btn-primary w-100" type="submit">Enlazar</button></div>
+                    </form>
+                  </td>
+                </tr>
+                {% endif %}
+            {% endwith %}
           {% endfor %}
         </tbody>
       </table>

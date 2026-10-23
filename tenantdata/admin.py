@@ -13,6 +13,8 @@ from .models import (
     Invoice,
     InvoiceItem,
     Payment,
+    WebhookDelivery,
+    WebhookEndpoint,
 )
 
 
@@ -142,3 +144,38 @@ class AuditEventAdmin(TenantOnlyAdminMixin, admin.ModelAdmin):
         "metadata",
         "created_at",
     )
+
+
+@admin.register(WebhookEndpoint)
+class WebhookEndpointAdmin(TenantOnlyAdminMixin, admin.ModelAdmin):
+    list_display = ("name", "url", "is_active", "created_at")
+    list_filter = ("is_active",)
+    search_fields = ("name", "url")
+    exclude = ("secret",)
+
+    def has_add_permission(self, request):
+        return False
+
+
+@admin.register(WebhookDelivery)
+class WebhookDeliveryAdmin(TenantOnlyAdminMixin, admin.ModelAdmin):
+    list_display = ("created_at", "event", "status", "attempts", "response_status")
+    list_filter = ("status", "event")
+    search_fields = ("target_url", "event", "last_error")
+    readonly_fields = (
+        "endpoint",
+        "event",
+        "target_url",
+        "payload",
+        "status",
+        "attempts",
+        "response_status",
+        "response_body",
+        "last_error",
+        "created_at",
+        "last_attempt_at",
+        "delivered_at",
+    )
+
+    def has_add_permission(self, request):
+        return False

@@ -1,0 +1,127 @@
+{% extends "platform/base.html" %}
+
+{% block title %}{{ tenant.name }} | Seguimiento de cliente{% endblock %}
+
+{% block platform_content %}
+<div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-4">
+	<div>
+		<a href="{% url 'platform_tenant_list' %}" class="small text-secondary text-decoration-none">← Clientes y tenants</a>
+		<div class="platform-kicker mt-2">Ficha de cliente</div>
+		<h1 class="h2 mb-1">{{ tenant.name }}</h1>
+		<div class="text-secondary">{{ tenant.get_tenant_type_display }} · <code>{{ tenant.schema_name }}</code></div>
+	</div>
+	<div class="d-flex gap-2 flex-wrap">
+		<a class="btn btn-outline-primary" href="{% url 'platform_tenant_edit' tenant.pk %}">Editar cliente</a>
+		<form method="post" action="{% url 'platform_tenant_toggle_active' tenant.pk %}">
+			{% csrf_token %}
+			<button class="btn {% if tenant.is_active %}btn-outline-danger{% else %}btn-success{% endif %}" type="submit">
+				{% if tenant.is_active %}Suspender acceso{% else %}Reactivar acceso{% endif %}
+			</button>
+		</form>
+	</div>
+</div>
+
+<div class="metric-grid mb-3">
+	<div class="platform-card"><div class="small text-secondary">Estado del servicio</div><div class="h4 mb-0 mt-1">{{ tenant.get_service_status_display }}</div></div>
+	<div class="platform-card"><div class="small text-secondary">Plan</div><div class="h4 mb-0 mt-1">{{ tenant.service_plan|default:"Sin definir" }}</div></div>
+	<div class="platform-card"><div class="small text-secondary">Renovación</div><div class="h4 mb-0 mt-1">{{ tenant.renewal_date|date:"d/m/Y"|default:"Sin fecha" }}</div></div>
+	<div class="platform-card"><div class="small text-secondary">Alta</div><div class="h4 mb-0 mt-1">{{ tenant.created_on|date:"d/m/Y" }}</div></div>
+</div>
+
+<div class="row g-3">
+	<div class="col-xl-7">
+		<div class="platform-card mb-3">
+			<div class="d-flex justify-content-between gap-2 align-items-start">
+				<div><h2 class="h5 mb-1">Contacto y organización</h2><p class="small text-secondary">Datos de contacto administrativo para seguimiento.</p></div>
+				{% if tenant.is_active %}<span class="badge text-bg-success">Acceso activo</span>{% else %}<span class="badge text-bg-danger">Acceso suspendido</span>{% endif %}
+			</div>
+			{% if business %}
+				<div class="row g-3">
+					<div class="col-md-6"><div class="small text-secondary">Responsable</div><div class="fw-semibold">{{ business.name_business_owner }} {{ business.last_name_business_owner }}</div></div>
+					<div class="col-md-6"><div class="small text-secondary">Organización</div><div class="fw-semibold">{{ business.business_name }}</div></div>
+					<div class="col-md-6"><div class="small text-secondary">Correo</div><a href="mailto:{{ business.business_email }}">{{ business.business_email }}</a></div>
+					<div class="col-md-6"><div class="small text-secondary">Teléfono</div><a href="tel:{{ business.business_phone }}">{{ business.business_phone }}</a></div>
+					<div class="col-12"><div class="small text-secondary">Dirección</div><div>{{ business.business_address|default:"No registrada" }}</div></div>
+				</div>
+			{% else %}
+				<p class="text-secondary mb-0">No fue posible leer el contacto de este tenant. {% if not schema_ready %}El schema puede requerir migraciones o revisión técnica.{% endif %}</p>
+			{% endif %}
+		</div>
+
+		<div class="platform-card mb-3">
+			<h2 class="h5">Actividad del espacio</h2>
+			{% if schema_ready %}
+				<div class="metric-grid">
+					<div><div class="small text-secondary">Empleados</div><div class="h3">{{ employee_count }}</div></div>
+					<div><div class="small text-secondary">Usuarios</div><div class="h3">{{ user_count }}</div></div>
+					<div><div class="small text-secondary">Movimientos</div><div class="h3">{{ entry_count }}</div></div>
+					<div><div class="small text-secondary">Facturas</div><div class="h3">{{ invoice_count }}</div></div>
+				</div>
+				<p class="small text-secondary mb-0">Conteos operativos únicamente; no se muestran valores ni documentos financieros.</p>
+			{% else %}
+				<p class="text-warning mb-0">No se pudo consultar el schema. Comprueba el estado de migraciones.</p>
+			{% endif %}
+		</div>
+
+		<div class="platform-card">
+			<h2 class="h5">Dominios</h2>
+			<ul class="list-unstyled mb-0">
+				{% for domain in tenant.domains.all %}
+					<li class="d-flex justify-content-between gap-2 py-2 border-bottom">
+						<code>{{ domain.domain }}</code>
+						{% if domain.is_primary %}<span class="badge text-bg-primary">Principal</span>{% endif %}
+					</li>
+				{% empty %}
+					<li class="text-secondary">No hay dominios asociados.</li>
+				{% endfor %}
+			</ul>
+		</div>
+	</div>
+
+	<div class="col-xl-5">
+		<div class="platform-card mb-3">
+			<h2 class="h5">Administradores del tenant</h2>
+			{% for admin in tenant_admins %}
+				<div class="py-2 border-bottom">
+					<div class="fw-semibold">{{ admin.get_full_name|default:admin.username }}</div>
+					<div class="small text-secondary">{{ admin.email|default:"Sin correo registrado" }} · {{ admin.last_login|date:"d/m/Y H:i"|default:"Sin inicio de sesión" }}</div>
+				</div>
+			{% empty %}
+				<p class="text-secondary mb-0">No hay usuarios con rol de superusuario en el schema.</p>
+			{% endfor %}
+		</div>
+
+		<div class="platform-card mb-3">
+			<h2 class="h5">Módulos habilitados</h2>
+			<div class="d-flex gap-2 flex-wrap">
+				{% for module in enabled_module_labels %}
+					<span class="badge text-bg-light border">{{ module }}</span>
+				{% empty %}
+					<span class="text-secondary">No hay módulos configurados.</span>
+				{% endfor %}
+			</div>
+		</div>
+
+		<div class="platform-card mb-3">
+			<h2 class="h5">Notas internas</h2>
+			{% if tenant.platform_notes %}
+				<p class="mb-0" style="white-space: pre-wrap">{{ tenant.platform_notes }}</p>
+			{% else %}
+				<p class="text-secondary mb-0">Aún no hay notas. <a href="{% url 'platform_tenant_edit' tenant.pk %}">Añade una nota</a> para registrar próximos pasos.</p>
+			{% endif %}
+		</div>
+
+		<div class="platform-card">
+			<h2 class="h5">Actividad reciente</h2>
+			{% for event in recent_activity %}
+				<div class="py-2 border-bottom">
+					<div class="fw-semibold">{{ event.summary }}</div>
+					<div class="small text-secondary">{{ event.created_at|date:"d/m/Y H:i" }} · {{ event.actor.get_full_name|default:event.actor.username|default:"Sistema" }}</div>
+				</div>
+			{% empty %}
+				<p class="text-secondary mb-0">No hay eventos recientes registrados.</p>
+			{% endfor %}
+		</div>
+	</div>
+</div>
+{% endblock %}

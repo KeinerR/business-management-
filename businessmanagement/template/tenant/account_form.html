@@ -1,0 +1,5 @@
+{% extends "tenant/base.html" %}
+{% block title %}{{ page_title }} | System Manager{% endblock %}
+{% block workspace_content %}
+<div class="container py-3" style="max-width:900px"><h2 class="h4 mb-3">{{ page_title }}</h2><form method="post" class="card card-body">{% csrf_token %}{% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}<div class="row g-3">{% for field in form %}<div class="{% if field.name == 'description' %}col-12{% else %}col-md-6{% endif %}"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% for error in field.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}</div>{% endfor %}</div><div class="mt-4"><button class="btn btn-primary">Guardar cuenta</button> <a class="btn btn-outline-secondary" href="{% url 'account_list' %}">Cancelar</a></div></form></div>
+{% endblock %}

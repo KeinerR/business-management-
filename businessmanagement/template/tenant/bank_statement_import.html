@@ -1,11 +1,11 @@
 {% extends "tenant/base.html" %}
 {% block workspace_content %}
 <div class="container mt-4">
-  <h3 class="mb-3">{{ page_title|default:"Importar Extracto Bancario CSV" }}</h3>
+  <h3 class="mb-3">{{ page_title|default:"Importar extracto bancario" }}</h3>
 
   <div class="alert alert-info mb-4">
     <h5><i class="bi bi-info-circle"></i> Instrucciones de importación</h5>
-    <p>El archivo CSV debe contener las siguientes columnas (encabezados):</p>
+    <p>El archivo CSV o Excel debe contener las siguientes columnas en la primera fila:</p>
     <ul>
       <li><strong>fecha</strong> o <strong>date</strong> - Fecha de la transacción (formato: YYYY-MM-DD o DD/MM/YYYY)</li>
       <li><strong>monto</strong> o <strong>amount</strong> - Valor de la transacción (número positivo)</li>
@@ -16,8 +16,8 @@
     <p><strong>Notas:</strong></p>
     <ul>
       <li>Los montos negativos (egresos) se detectan automáticamente si hay signo menos</li>
-      <li>El separador puede ser comma (,) o punto y coma (;)</li>
-      <li>Si选择 "El CSV tiene encabezado", la primera fila se ignorará</li>
+      <li>Para CSV, el separador puede ser coma (,) o punto y coma (;)</li>
+      <li>Excel admite archivos <code>.xlsx</code>; la primera hoja será importada</li>
     </ul>
     <p><a href="#" onclick="document.getElementById('ejemplo').style.display=document.getElementById('ejemplo').style.display?'none':'block';return false;">Ver ejemplo de CSV</a></p>
     <pre id="ejemplo" style="display:none;background:#f5f5f5;padding:10px;border-radius:5px;">fecha,monto,moneda,descripcion,referencia
@@ -50,7 +50,7 @@
 
         <div class="row">
           <div class="col-md-6 mb-3">
-            <label class="form-label">Archivo CSV</label>
+            <label class="form-label">Archivo CSV o Excel</label>
             {{ form.file }}
             {% if form.file.errors %}
               <div class="text-danger small">{{ form.file.errors }}</div>

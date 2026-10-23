@@ -28,6 +28,7 @@
 							<th class="ps-4 fw-bold text-muted">Nombre</th>
 							<th class="fw-bold text-muted">Tipo</th>
 							<th class="fw-bold text-muted">Estado</th>
+							<th class="fw-bold text-muted">Cuenta contable</th>
 							<th class="text-center fw-bold text-muted pe-4">Acciones</th>
 						</tr>
 					</thead>
@@ -47,6 +48,7 @@
 										{% if category.is_active %}Activa{% else %}Inactiva{% endif %}
 									</span>
 								</td>
+								<td>{% if category.account %}<code>{{ category.account.code }}</code> {{ category.account.name }}{% else %}<span class="text-muted">Sin mapear</span>{% endif %}</td>
 								<td class="text-center pe-4">
 									<a class="btn btn-sm btn-outline-secondary" href="{% url 'financial_category_edit' category.id %}">
 										<i class="bi bi-pencil"></i> Editar

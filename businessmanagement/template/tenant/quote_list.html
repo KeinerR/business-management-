@@ -92,7 +92,7 @@
                                 <strong>${{ quote.total|floatformat:2 }} {{ quote.currency }}</strong>
                             </td>
                             <td>
-                                <span class="badge bg-{% if quote.status == 'draft' %}secondary{% elif quote.status == 'accepted' %}info{% elif quote.status == 'converted' %}success{% elif quote.status == 'cancelled' %}dark{% endif %}">
+                                <span class="badge bg-{% if quote.status == 'draft' %}secondary{% elif quote.status == 'accepted' %}info{% elif quote.status == 'converted' %}success{% elif quote.status == 'expired' %}danger{% elif quote.status == 'cancelled' %}dark{% endif %}">
                                     {{ quote.get_status_display }}
                                 </span>
                             </td>
@@ -101,10 +101,12 @@
                                     <i class="bi bi-eye"></i>
                                 </a>
                                 {% if quote.status == 'draft' %}
-                                    <a href="{% url 'quote_accept' quote.id %}" class="btn btn-sm btn-success" title="Aceptar" onclick="return confirm('¿Aceptar la cotización?');">
-                                        <i class="bi bi-check-circle"></i> Aceptar
-                                    </a>
+                                    <a href="{% url 'quote_edit' quote.id %}" class="btn btn-sm btn-warning" title="Editar"><i class="bi bi-pencil"></i></a>
+                                    <form method="post" action="{% url 'quote_accept' quote.id %}" class="d-inline" onsubmit="return confirm('¿Aceptar la cotización?');">
+                                      {% csrf_token %}<button class="btn btn-sm btn-success" type="submit"><i class="bi bi-check-circle"></i> Aceptar</button>
+                                    </form>
                                 {% endif %}
+                                <a href="{% url 'quote_pdf' quote.id %}" class="btn btn-sm btn-outline-danger" title="PDF"><i class="bi bi-file-pdf"></i></a>
                                 {% if quote.status == 'accepted' %}
                                     <form method="post" action="{% url 'quote_convert_to_invoice' quote.id %}" style="display:inline;" onsubmit="return confirm('¿Convertir esta cotización a factura?');">
                                         {% csrf_token %}

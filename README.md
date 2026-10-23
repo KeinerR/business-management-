@@ -37,7 +37,7 @@ Quickstart (local):
 pip install -r requirements.txt
 ```
 
-3. Configurar PostgreSQL y variables de entorno (`SECRET_KEY`, `DATABASE_URL`, `ALLOWED_HOSTS`).
+3. Configurar PostgreSQL y variables de entorno (`DJANGO_SECRET_KEY`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DJANGO_ALLOWED_HOSTS`).
 4. Ejecutar migraciones (incluyendo esquemas tenants):
 
 ```bash
@@ -78,40 +78,51 @@ Para detalles y documentación de funcionamiento, ver `docs/HOW_SYSTEM_WORKS.md`
 Para ejemplos de uso de la API y JWT, ver `README_API.md`.
 Celery + Redis (tareas periódicas)
 ---------------------------------
-Para ejecutar la tarea periódica que actualiza `CurrencyRate` se recomienda usar Redis como broker y Celery.
-
-1. Construir la imagen y levantar servicios con Docker Compose:
+El archivo `compose.yml` es el entorno de desarrollo. No crea usuarios con contraseñas predeterminadas; crea la cuenta administrativa de forma interactiva:
 
 ```bash
-docker compose -f compose.yml up --build -d
+docker compose -f compose.yml exec web python manage.py createsuperuser
 ```
 
-Esto crea cuatro servicios: `db`, `redis`, `web`, `celery_worker` y `celery_beat`.
+### Despliegue con Docker
 
-2. Configurar variables de entorno (en `.env`):
+La configuración de producción está separada en `compose.production.yml`. Requiere un proxy inverso con TLS, una clave Django y credenciales de base de datos fuertes. No montes el código fuente ni el archivo `.env` dentro del contenedor.
 
-```
-DJANGO_SECRET_KEY=...
-DB_NAME=...
-DB_USER=...
-DB_PASSWORD=...
-DB_HOST=db
-DB_PORT=5432
-CELERY_BROKER_URL=redis://redis:6379/0
-CELERY_RESULT_BACKEND=redis://redis:6379/1
-CURRENCY_API_URL=https://api.example.com/latest_rates
-```
-
-3. Verificar el estado de los contenedores:
+1. Crea tu archivo local de variables a partir del ejemplo y reemplaza todos los valores de muestra por secretos únicos:
 
 ```bash
-docker compose -f compose.yml ps
+cp .env.prod.example .env.prod
 ```
 
-4. Para ver logs de Celery:
+2. Construye y levanta el stack de producción:
+
+```bash
+docker compose --env-file .env.prod -f compose.production.yml up --build -d
+```
+
+El stack inicia PostgreSQL, Redis, Gunicorn con WhiteNoise, un worker y Celery Beat. Las migraciones tenant y la recolección de estáticos se ejecutan antes de iniciar Gunicorn. Los archivos subidos, los datos de PostgreSQL, Redis y el calendario de Celery Beat se guardan en volúmenes Docker.
+
+3. Crea la cuenta administradora inicial en el esquema público:
+
+```bash
+docker compose --env-file .env.prod -f compose.production.yml exec web python manage.py createsuperuser
+```
+
+4. Verifica la disponibilidad y los logs:
+
+```bash
+docker compose --env-file .env.prod -f compose.production.yml ps
+docker compose --env-file .env.prod -f compose.production.yml logs -f web
+```
+
+El endpoint interno `/health/` verifica conectividad con la base de datos. Si terminas TLS en un proxy, configura `DJANGO_ALLOWED_HOSTS` y `DJANGO_CSRF_TRUSTED_ORIGINS` para los dominios reales y conserva el envío del encabezado `X-Forwarded-Proto: https`.
+
+El archivo `docker-compose.yml` es una configuración heredada; usa explícitamente `compose.yml` para desarrollo o `compose.production.yml` para producción.
+
+### Logs de Celery en desarrollo
 
 ```bash
 docker compose -f compose.yml logs -f celery_worker
 ```
 
-La tarea `businessmanagement.tasks.update_currency_rates` está configurada para ejecutarse diariamente a las 03:00 UTC por defecto. Ajusta `config/celery.py` si necesitas otro horario.
+Las tareas programadas activas están definidas en `config/celery.py`.

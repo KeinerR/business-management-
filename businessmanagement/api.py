@@ -1,18 +1,269 @@
+import hashlib
+import json
+
 from django.conf import settings
 from django.db import connection
+from django.db import IntegrityError, transaction
 from django.core.paginator import Paginator
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from rest_framework import mixins, status
+from rest_framework.pagination import PageNumberPagination
+from rest_framework.permissions import BasePermission, IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.viewsets import GenericViewSet
 from rest_framework.authentication import SessionAuthentication
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
-from tenantdata.models import FinancialEntry, ThirdParty, CurrencyRate
+from tenantdata.models import (
+    APIIdempotencyRecord,
+    AuditEvent,
+    CurrencyRate,
+    FinancialEntry,
+    ThirdParty,
+    WebhookDelivery,
+    WebhookEndpoint,
+)
+from businessmanagement.serializers import (
+    FinancialEntrySerializer,
+    ThirdPartySerializer,
+    WebhookDeliverySerializer,
+    WebhookEndpointSerializer,
+)
 
 
 def _is_tenant_schema():
     return connection.schema_name != settings.PUBLIC_SCHEMA_NAME
+
+
+class TenantAPIWritePermission(BasePermission):
+    elevated_groups = ("Administrador de empresa", "Operador financiero")
+
+    def has_permission(self, request, view):
+        tenant = getattr(request, "tenant", None)
+        if (
+            not request.user.is_authenticated
+            or not _is_tenant_schema()
+            or tenant is None
+            or getattr(tenant, "schema_name", settings.PUBLIC_SCHEMA_NAME)
+            != connection.schema_name
+        ):
+            return False
+
+        module = getattr(view, "required_module", None)
+        if module and not tenant.is_module_enabled(module):
+            return False
+
+        needs_elevated_access = (
+            getattr(view, "restricted_api", False)
+            or request.method not in ("GET", "HEAD", "OPTIONS")
+        )
+        if needs_elevated_access and not (
+            request.user.is_superuser
+            or request.user.groups.filter(name__in=self.elevated_groups).exists()
+        ):
+            return False
+        return True
+
+
+class APIPageNumberPagination(PageNumberPagination):
+    page_size = 25
+    page_size_query_param = "page_size"
+    max_page_size = 100
+
+
+class IdempotentCreateMixin:
+    def create(self, request, *args, **kwargs):
+        idempotency_key = request.headers.get("Idempotency-Key", "").strip()
+        if not idempotency_key or len(idempotency_key) > 255:
+            return Response(
+                {"detail": "Envía una cabecera Idempotency-Key de hasta 255 caracteres."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        fingerprint = hashlib.sha256(
+            json.dumps(request.data, sort_keys=True, separators=(",", ":"), default=str).encode()
+        ).hexdigest()
+        with transaction.atomic():
+            try:
+                with transaction.atomic():
+                    record = APIIdempotencyRecord.objects.create(
+                        user=request.user,
+                        key=idempotency_key,
+                        request_fingerprint=fingerprint,
+                    )
+                    is_new = True
+            except IntegrityError:
+                record = APIIdempotencyRecord.objects.get(
+                    user=request.user, key=idempotency_key
+                )
+                is_new = False
+
+            if not is_new:
+                if record.request_fingerprint != fingerprint:
+                    return Response(
+                        {"detail": "La clave ya fue usada con otra solicitud."},
+                        status=status.HTTP_409_CONFLICT,
+                    )
+                return Response(record.response_body, status=record.response_status)
+
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            self.perform_create(serializer)
+            record.response_status = status.HTTP_201_CREATED
+            record.response_body = serializer.data
+            record.save(update_fields=("response_status", "response_body"))
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class FinancialEntryViewSet(
+    IdempotentCreateMixin,
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.CreateModelMixin,
+    mixins.UpdateModelMixin,
+    GenericViewSet,
+):
+    serializer_class = FinancialEntrySerializer
+    pagination_class = APIPageNumberPagination
+    permission_classes = (TenantAPIWritePermission,)
+    required_module = "finances"
+    queryset = FinancialEntry.objects.select_related(
+        "business", "project", "category", "third_party", "created_by"
+    )
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        for parameter, field in (
+            ("type", "entry_type"),
+            ("status", "status"),
+            ("currency", "currency"),
+        ):
+            value = self.request.query_params.get(parameter)
+            if value:
+                queryset = queryset.filter(**{field: value})
+        date_from = self.request.query_params.get("date_from")
+        date_to = self.request.query_params.get("date_to")
+        if date_from:
+            queryset = queryset.filter(entry_date__gte=date_from)
+        if date_to:
+            queryset = queryset.filter(entry_date__lte=date_to)
+        return queryset
+
+    def perform_create(self, serializer):
+        entry = serializer.save(created_by=self.request.user)
+        AuditEvent.objects.create(
+            actor=self.request.user,
+            action=AuditEvent.CREATE,
+            entity="financial_entry",
+            entity_id=str(entry.pk),
+            summary=f"Movimiento creado por API: {entry.concept}",
+        )
+
+    def perform_update(self, serializer):
+        entry = serializer.save()
+        AuditEvent.objects.create(
+            actor=self.request.user,
+            action=AuditEvent.UPDATE,
+            entity="financial_entry",
+            entity_id=str(entry.pk),
+            summary=f"Movimiento actualizado por API: {entry.concept}",
+        )
+
+
+class ThirdPartyViewSet(
+    IdempotentCreateMixin,
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.CreateModelMixin,
+    mixins.UpdateModelMixin,
+    GenericViewSet,
+):
+    serializer_class = ThirdPartySerializer
+    pagination_class = APIPageNumberPagination
+    permission_classes = (TenantAPIWritePermission,)
+    required_module = "third_parties"
+    queryset = ThirdParty.objects.all()
+
+    def perform_create(self, serializer):
+        third_party = serializer.save()
+        AuditEvent.objects.create(
+            actor=self.request.user,
+            action=AuditEvent.CREATE,
+            entity="third_party",
+            entity_id=str(third_party.pk),
+            summary=f"Tercero creado por API: {third_party.name}",
+        )
+
+    def perform_update(self, serializer):
+        third_party = serializer.save()
+        AuditEvent.objects.create(
+            actor=self.request.user,
+            action=AuditEvent.UPDATE,
+            entity="third_party",
+            entity_id=str(third_party.pk),
+            summary=f"Tercero actualizado por API: {third_party.name}",
+        )
+
+
+class WebhookEndpointViewSet(
+    IdempotentCreateMixin,
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.CreateModelMixin,
+    mixins.UpdateModelMixin,
+    GenericViewSet,
+):
+    serializer_class = WebhookEndpointSerializer
+    pagination_class = APIPageNumberPagination
+    permission_classes = (TenantAPIWritePermission,)
+    restricted_api = True
+    queryset = WebhookEndpoint.objects.all()
+
+    def perform_create(self, serializer):
+        endpoint = serializer.save(created_by=self.request.user)
+        AuditEvent.objects.create(
+            actor=self.request.user,
+            action=AuditEvent.CREATE,
+            entity="webhook_endpoint",
+            entity_id=str(endpoint.pk),
+            summary=f"Endpoint webhook creado por API: {endpoint.name}",
+            metadata={"events": endpoint.event_types},
+        )
+
+    def perform_update(self, serializer):
+        endpoint = serializer.save()
+        AuditEvent.objects.create(
+            actor=self.request.user,
+            action=AuditEvent.UPDATE,
+            entity="webhook_endpoint",
+            entity_id=str(endpoint.pk),
+            summary=f"Endpoint webhook actualizado por API: {endpoint.name}",
+            metadata={"events": endpoint.event_types, "active": endpoint.is_active},
+        )
+
+
+class WebhookDeliveryViewSet(
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    GenericViewSet,
+):
+    serializer_class = WebhookDeliverySerializer
+    pagination_class = APIPageNumberPagination
+    permission_classes = (TenantAPIWritePermission,)
+    restricted_api = True
+    queryset = WebhookDelivery.objects.select_related("endpoint")
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        event = self.request.query_params.get("event")
+        delivery_status = self.request.query_params.get("status")
+        if event:
+            queryset = queryset.filter(event=event)
+        if delivery_status:
+            queryset = queryset.filter(status=delivery_status)
+        return queryset
 
 
 @api_view(['GET'])

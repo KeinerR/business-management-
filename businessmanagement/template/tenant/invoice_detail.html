@@ -20,6 +20,19 @@
                 <a href="{% url 'invoice_edit' invoice.id %}" class="btn btn-warning">
                     <i class="bi bi-pencil"></i> Editar
                 </a>
+                <form method="post" action="{% url 'invoice_issue' invoice.id %}" class="d-inline" onsubmit="return confirm('¿Emitir la factura y crear la cuenta por cobrar?');">
+                    {% csrf_token %}<button type="submit" class="btn btn-primary"><i class="bi bi-send"></i> Emitir</button>
+                </form>
+            {% endif %}
+            {% if invoice.financial_entry and invoice.financial_entry.status != 'paid' and invoice.financial_entry.status != 'cancelled' %}
+                <a href="{% url 'payment_create' invoice.financial_entry.id %}" class="btn btn-success">
+                    <i class="bi bi-cash-coin"></i> Registrar pago
+                </a>
+            {% endif %}
+            {% if invoice.status != 'paid' and invoice.status != 'cancelled' %}
+                <form method="post" action="{% url 'invoice_cancel' invoice.id %}" class="d-inline" onsubmit="return confirm('¿Anular esta factura? Esta acción conserva el documento para auditoría.');">
+                    {% csrf_token %}<button type="submit" class="btn btn-outline-danger"><i class="bi bi-x-circle"></i> Anular</button>
+                </form>
             {% endif %}
         </div>
     </div>
@@ -162,14 +175,28 @@
                         </div>
                     </div>
 
-                    <div class="row mb-3">
+                    <div class="row mb-2">
                         <div class="col-6">
-                            <p class="text-muted mb-0">IVA ({{ invoice.tax_percentage }}%):</p>
+                            <p class="text-muted mb-0">Impuestos:</p>
                         </div>
                         <div class="col-6 text-end">
                             <p class="mb-0">${{ invoice.tax_amount|floatformat:2 }}</p>
                         </div>
                     </div>
+                    {% for rule in invoice.tax_rules.all %}
+                        <div class="small text-muted d-flex justify-content-between mb-1">
+                            <span>{{ rule.name }}</span><span>{{ rule.percentage }}%</span>
+                        </div>
+                    {% empty %}
+                        <p class="small text-muted">Sin reglas tributarias aplicadas.</p>
+                    {% endfor %}
+
+                    {% if invoice.retention_amount %}
+                        <div class="row mt-3 mb-2">
+                            <div class="col-6"><p class="text-muted mb-0">Retenciones:</p></div>
+                            <div class="col-6 text-end"><p class="mb-0">-${{ invoice.retention_amount|floatformat:2 }}</p></div>
+                        </div>
+                    {% endif %}
 
                     <hr>
 
@@ -192,6 +219,18 @@
                                     {{ invoice.financial_entry.get_entry_type_display }}
                                 </a>
                             </p>
+                            <p class="mb-1"><strong>Estado:</strong> {{ invoice.financial_entry.get_status_display }}</p>
+                            <p class="mb-2"><strong>Pagos registrados:</strong> {{ invoice.financial_entry.payments.count }}</p>
+                            {% if invoice.financial_entry.payments.exists %}
+                              <ul class="list-group list-group-flush">
+                              {% for payment in invoice.financial_entry.payments.all %}
+                                <li class="list-group-item px-0 py-2 d-flex justify-content-between">
+                                  <span>{{ payment.payment_date|date:"d/m/Y" }}</span>
+                                  <strong>{{ payment.amount|floatformat:2 }} {{ payment.currency }}</strong>
+                                </li>
+                              {% endfor %}
+                              </ul>
+                            {% endif %}
                         </div>
                     {% endif %}
                 </div>

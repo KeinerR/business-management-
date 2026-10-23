@@ -8,39 +8,58 @@
 <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-4">
 	<div>
 		<div class="sidebar-kicker">Resumen operativo</div>
-		<h2 class="h2 mb-1">Dashboard de empresa</h2>
-		<p class="text-secondary mb-0">Controla empleados, usuarios y grupos sin salir del panel del tenant.</p>
+		<h2 class="h2 mb-1">
+			{% if tenant_type == "individual" %}Panel financiero personal{% else %}Dashboard de empresa{% endif %}
+		</h2>
+		<p class="text-secondary mb-0">
+			{% if tenant_type == "individual" %}
+				Consulta tus movimientos, cartera y proyectos personales desde un solo lugar.
+			{% else %}
+				Controla la operación, las finanzas y el equipo desde el panel de tu empresa.
+			{% endif %}
+		</p>
 	</div>
-	<a class="btn btn-sm-brand" href="{% url 'create_employee' %}">Crear empleado</a>
+	{% if "employees" in enabled_modules %}
+		<a class="btn btn-sm-brand" href="{% url 'create_employee' %}">Crear empleado</a>
+	{% elif "finances" in enabled_modules %}
+		<a class="btn btn-sm-brand" href="{% url 'financial_entry_create' %}">Nuevo movimiento</a>
+	{% endif %}
 </div>
 
 <div class="metric-grid mb-4">
-	{% if request.tenant.enabled_modules and "employees" in request.tenant.enabled_modules %}
+	{% if "employees" in enabled_modules %}
 	<div class="panel-card">
 		<div class="text-secondary small">Empleados</div>
 		<div class="metric-value">{{ employee_count }}</div>
 	</div>
 	{% endif %}
+	{% if "users" in enabled_modules %}
 	<div class="panel-card">
 		<div class="text-secondary small">Usuarios</div>
 		<div class="metric-value">{{ user_count }}</div>
 	</div>
+	{% endif %}
+	{% if tenant_type == "business" %}
 	<div class="panel-card">
 		<div class="text-secondary small">Empresa base</div>
 		<div class="metric-value">{% if business %}OK{% else %}--{% endif %}</div>
 	</div>
-	{% if request.tenant.enabled_modules and "third_parties" in request.tenant.enabled_modules %}
+	{% endif %}
+	{% if "third_parties" in enabled_modules %}
 	<div class="panel-card">
 		<div class="text-secondary small">Terceros activos</div>
 		<div class="metric-value">{{ third_party_count }}</div>
 	</div>
 	{% endif %}
+	{% if "finances" in enabled_modules %}
 	<div class="panel-card">
 		<div class="text-secondary small">Pendientes</div>
 		<div class="metric-value">{{ pending_count }}</div>
 	</div>
+	{% endif %}
 </div>
 
+{% if "finances" in enabled_modules %}
 <div class="row g-3 mb-4">
 	<div class="col-md-3">
 		<div class="panel-card bg-primary bg-opacity-10 border-primary border-opacity-25">
@@ -75,8 +94,10 @@
 		</div>
 	</div>
 </div>
+{% endif %}
 
 <div class="row g-3">
+	{% if tenant_type == "business" %}
 	<div class="col-lg-7">
 		<div class="panel-card h-100">
 			<h3 class="h5">Informacion de la empresa</h3>
@@ -96,20 +117,68 @@
 			{% endif %}
 		</div>
 	</div>
-	<div class="col-lg-5">
+	{% endif %}
+	<div class="{% if tenant_type == 'individual' %}col-12{% else %}col-lg-5{% endif %}">
 		<div class="panel-card h-100">
 			<h3 class="h5">Acciones rapidas</h3>
-			<p class="text-secondary">Gestiona finanzas, terceros, equipo y grupos de acceso desde vistas propias.</p>
+			<p class="text-secondary">
+				{% if tenant_type == "individual" %}Accede rápidamente a tus herramientas personales habilitadas.{% else %}Gestiona finanzas, terceros y equipo desde vistas propias.{% endif %}
+			</p>
 			<div class="d-flex gap-2 flex-wrap">
-				<a class="btn btn-sm-brand" href="{% url 'financial_entry_create' %}">Nuevo movimiento</a>
-				<a class="btn btn-outline-secondary" href="{% url 'third_party_create' %}">Nuevo tercero</a>
-				<a class="btn btn-sm-brand" href="{% url 'employee_list' %}">Ver empleados</a>
-				<a class="btn btn-outline-secondary" href="{% url 'tenant_group_list' %}">Gestionar grupos</a>
+				{% if "finances" in enabled_modules %}
+					<a class="btn btn-sm-brand" href="{% url 'financial_entry_create' %}">Nuevo movimiento</a>
+				{% endif %}
+				{% if "third_parties" in enabled_modules %}
+					<a class="btn btn-outline-secondary" href="{% url 'third_party_create' %}">Nuevo tercero</a>
+				{% endif %}
+				{% if "employees" in enabled_modules %}
+					<a class="btn btn-sm-brand" href="{% url 'employee_list' %}">Ver empleados</a>
+				{% endif %}
+				{% if "groups" in enabled_modules %}
+					<a class="btn btn-outline-secondary" href="{% url 'tenant_group_list' %}">Gestionar grupos</a>
+				{% endif %}
+				{% if "invoices" in enabled_modules %}
+					<a class="btn btn-outline-secondary" href="{% url 'invoice_create' %}">Crear factura</a>
+				{% endif %}
+				{% if "projects" in enabled_modules %}
+					<a class="btn btn-outline-secondary" href="{% url 'project_create' %}">Nuevo proyecto</a>
+				{% endif %}
 			</div>
 		</div>
 	</div>
 </div>
 
+{% if "finances" in enabled_modules %}
+<section class="panel-card mt-3" aria-labelledby="monthly-flow-title">
+	<div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
+		<div>
+			<h3 class="h5 mb-1" id="monthly-flow-title">Ingresos y egresos del mes</h3>
+			<p class="text-secondary small mb-0">Movimientos registrados en COP desde el inicio del mes.</p>
+		</div>
+		<a class="btn btn-outline-secondary btn-sm" href="{% url 'financial_entry_list' %}">Ver movimientos</a>
+	</div>
+	<div class="vstack gap-3">
+		<div>
+			<div class="d-flex justify-content-between small mb-1">
+				<span>Ingresos</span><strong>{{ income_current_month|floatformat:2 }} COP</strong>
+			</div>
+			<div class="progress" role="progressbar" aria-label="Ingresos del mes" aria-valuenow="{{ income_current_month_percent }}" aria-valuemin="0" aria-valuemax="100">
+				<div class="progress-bar bg-success" style="width: {{ income_current_month_percent }}%"></div>
+			</div>
+		</div>
+		<div>
+			<div class="d-flex justify-content-between small mb-1">
+				<span>Egresos</span><strong>{{ expense_current_month|floatformat:2 }} COP</strong>
+			</div>
+			<div class="progress" role="progressbar" aria-label="Egresos del mes" aria-valuenow="{{ expense_current_month_percent }}" aria-valuemin="0" aria-valuemax="100">
+				<div class="progress-bar bg-danger" style="width: {{ expense_current_month_percent }}%"></div>
+			</div>
+		</div>
+	</div>
+</section>
+{% endif %}
+
+{% if "finances" in enabled_modules %}
 <div class="row g-3 mt-1">
 	<div class="col-lg-7">
 		<div class="panel-card h-100">
@@ -165,7 +234,9 @@
 		</div>
 	</div>
 </div>
+{% endif %}
 
+{% if "currency_rates" in enabled_modules %}
 <div class="panel-card mt-3">
 	<div class="d-flex justify-content-between align-items-center gap-2 flex-wrap">
 		<div>
@@ -182,4 +253,5 @@
 		{% endfor %}
 	</div>
 </div>
+{% endif %}
 {% endblock %}

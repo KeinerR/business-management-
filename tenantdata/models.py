@@ -1,7 +1,11 @@
 from decimal import Decimal
+import re
 
 from django.conf import settings
 from django.db import models
+from django.core.exceptions import ValidationError
+from django.utils.text import get_valid_filename
+from uuid import uuid4
 
 
 class Business(models.Model):
@@ -135,6 +139,66 @@ class Project(models.Model):
         return self.name
 
 
+class Account(models.Model):
+    ASSET = "asset"
+    LIABILITY = "liability"
+    EQUITY = "equity"
+    INCOME = "income"
+    EXPENSE = "expense"
+    COST = "cost"
+    TYPE_CHOICES = (
+        (ASSET, "Activo"),
+        (LIABILITY, "Pasivo"),
+        (EQUITY, "Patrimonio"),
+        (INCOME, "Ingresos"),
+        (EXPENSE, "Gastos"),
+        (COST, "Costos"),
+    )
+    DEBIT = "debit"
+    CREDIT = "credit"
+    NATURE_CHOICES = ((DEBIT, "Débito"), (CREDIT, "Crédito"))
+
+    business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name="accounts")
+    code = models.CharField(max_length=20)
+    name = models.CharField(max_length=180)
+    account_type = models.CharField(max_length=20, choices=TYPE_CHOICES)
+    nature = models.CharField(max_length=10, choices=NATURE_CHOICES)
+    parent = models.ForeignKey("self", on_delete=models.PROTECT, null=True, blank=True, related_name="children")
+    accepts_entries = models.BooleanField(default=True)
+    is_active = models.BooleanField(default=True)
+    description = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("code",)
+        constraints = [models.UniqueConstraint(fields=("business", "code"), name="unique_account_code_per_business")]
+        indexes = [models.Index(fields=("account_type", "is_active"))]
+        verbose_name = "Cuenta contable"
+        verbose_name_plural = "Plan contable"
+
+    def clean(self):
+        self.code = (self.code or "").strip()
+        if not self.code.isdigit():
+            raise ValidationError({"code": "El código contable debe contener únicamente números."})
+        if self.parent:
+            if self.pk and self.parent_id == self.pk:
+                raise ValidationError({"parent": "Una cuenta no puede ser su propio padre."})
+            if self.parent.business_id != self.business_id:
+                raise ValidationError({"parent": "La cuenta padre debe pertenecer a la misma empresa."})
+            if not self.code.startswith(self.parent.code) or len(self.code) <= len(self.parent.code):
+                raise ValidationError({"code": "El código debe extender el código de la cuenta padre."})
+            if self.parent.accepts_entries:
+                raise ValidationError({"parent": "La cuenta padre debe estar marcada como agrupadora."})
+
+    @property
+    def depth(self):
+        return max(len(self.code) - 1, 0)
+
+    def __str__(self):
+        return f"{self.code} - {self.name}"
+
+
 class FinancialCategory(models.Model):
     INCOME = "income"
     EXPENSE = "expense"
@@ -151,6 +215,7 @@ class FinancialCategory(models.Model):
     )
     name = models.CharField(max_length=120)
     category_type = models.CharField(max_length=20, choices=CATEGORY_TYPE_CHOICES)
+    account = models.ForeignKey(Account, on_delete=models.SET_NULL, null=True, blank=True, related_name="financial_categories")
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -516,12 +581,14 @@ class Quote(models.Model):
     ACCEPTED = "accepted"
     CONVERTED = "converted"
     CANCELLED = "cancelled"
+    EXPIRED = "expired"
 
     STATUS_CHOICES = (
         (DRAFT, "Borrador"),
         (ACCEPTED, "Aceptada"),
         (CONVERTED, "Convertida"),
         (CANCELLED, "Cancelada"),
+        (EXPIRED, "Vencida"),
     )
 
     business = models.ForeignKey(
@@ -976,17 +1043,32 @@ class ImportBatch(models.Model):
         (FINANCIAL_ENTRY, 'Movimiento Financiero'),
         (THIRD_PARTY, 'Tercero'),
     ]
+    UPLOADED = "uploaded"
+    PREVIEWED = "previewed"
+    CONFIRMED = "confirmed"
+    FAILED = "failed"
+    ROLLED_BACK = "rolled_back"
+    STATUS_CHOICES = [
+        (UPLOADED, "Subido"),
+        (PREVIEWED, "Validado"),
+        (CONFIRMED, "Confirmado"),
+        (FAILED, "Fallido"),
+        (ROLLED_BACK, "Revertido"),
+    ]
 
     business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name='import_batches')
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='import_batches_created')
     created_at = models.DateTimeField(auto_now_add=True)
     file_name = models.CharField(max_length=255)
     target_model = models.CharField(max_length=50, choices=TARGET_MODEL_CHOICES)
-    status = models.CharField(max_length=50, default='uploaded') # uploaded, previewed, confirmed, failed
+    status = models.CharField(max_length=50, choices=STATUS_CHOICES, default=UPLOADED)
     total_rows = models.IntegerField(default=0)
     processed_rows = models.IntegerField(default=0)
     failed_rows = models.IntegerField(default=0)
     notes = models.TextField(blank=True, null=True)
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+    rolled_back_at = models.DateTimeField(null=True, blank=True)
+    rolled_back_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="import_batches_rolled_back")
 
     class Meta:
         ordering = ['-created_at']
@@ -997,9 +1079,23 @@ class ImportBatch(models.Model):
         return f"Import Batch {self.pk} - {self.target_model} - {self.file_name}"
 
 class ImportedRecord(models.Model):
+    PENDING = "pending"
+    VALID = "valid"
+    INVALID = "invalid"
+    PROCESSED = "processed"
+    FAILED = "failed"
+    ROLLED_BACK = "rolled_back"
+    STATUS_CHOICES = [
+        (PENDING, "Pendiente"),
+        (VALID, "Válido"),
+        (INVALID, "Inválido"),
+        (PROCESSED, "Procesado"),
+        (FAILED, "Fallido"),
+        (ROLLED_BACK, "Revertido"),
+    ]
     batch = models.ForeignKey(ImportBatch, on_delete=models.CASCADE, related_name='records')
     row_data = models.JSONField() # Stores the raw data of the row
-    status = models.CharField(max_length=50, default='pending') # pending, valid, invalid, processed
+    status = models.CharField(max_length=50, choices=STATUS_CHOICES, default=PENDING)
     validation_errors = models.JSONField(default=list, blank=True)
     processed_object_id = models.CharField(max_length=255, blank=True, null=True) # FK to FinancialEntry or ThirdParty
     processed_object_model = models.CharField(max_length=50, blank=True, null=True)
@@ -1082,5 +1178,276 @@ class BudgetLine(models.Model):
             filters['project'] = self.project
         
         return FinancialEntry.objects.filter(entry_type=FinancialEntry.EXPENSE, **filters).aggregate(models.Sum('amount'))['amount__sum'] or Decimal("0.00")
-    
-         
+
+
+class Notification(models.Model):
+    INFO = "info"
+    SUCCESS = "success"
+    WARNING = "warning"
+    DANGER = "danger"
+    LEVEL_CHOICES = (
+        (INFO, "Información"),
+        (SUCCESS, "Éxito"),
+        (WARNING, "Advertencia"),
+        (DANGER, "Crítica"),
+    )
+
+    recipient = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="notifications",
+    )
+    level = models.CharField(max_length=16, choices=LEVEL_CHOICES, default=INFO)
+    title = models.CharField(max_length=160)
+    message = models.TextField()
+    link = models.CharField(max_length=500, blank=True)
+    entity = models.CharField(max_length=80, blank=True)
+    entity_id = models.CharField(max_length=80, blank=True)
+    dedupe_key = models.CharField(max_length=190, blank=True)
+    is_read = models.BooleanField(default=False)
+    read_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=("recipient", "is_read", "created_at")),
+            models.Index(fields=("entity", "entity_id")),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=("recipient", "dedupe_key"),
+                condition=~models.Q(dedupe_key=""),
+                name="unique_notification_dedupe_per_recipient",
+            )
+        ]
+        verbose_name = "Notificación"
+        verbose_name_plural = "Notificaciones"
+
+    def __str__(self):
+        return f"{self.title} → {self.recipient}"
+
+
+class ApprovalRequest(models.Model):
+    QUOTE = "quote"
+    EXPENSE = "expense"
+    ENTITY_CHOICES = ((QUOTE, "Cotización"), (EXPENSE, "Gasto"))
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    CANCELLED = "cancelled"
+    STATUS_CHOICES = (
+        (PENDING, "Pendiente"),
+        (APPROVED, "Aprobada"),
+        (REJECTED, "Rechazada"),
+        (CANCELLED, "Cancelada"),
+    )
+
+    business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name="approval_requests")
+    entity_type = models.CharField(max_length=30, choices=ENTITY_CHOICES)
+    entity_id = models.PositiveBigIntegerField()
+    title = models.CharField(max_length=200)
+    amount = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    currency = models.CharField(max_length=12, blank=True)
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=PENDING)
+    reason = models.TextField(blank=True)
+    decision_notes = models.TextField(blank=True)
+    requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="approval_requests_created")
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="approval_requests_reviewed")
+    requested_at = models.DateTimeField(auto_now_add=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-requested_at",)
+        indexes = [models.Index(fields=("status", "entity_type", "requested_at"))]
+        constraints = [
+            models.UniqueConstraint(
+                fields=("entity_type", "entity_id"),
+                condition=models.Q(status="pending"),
+                name="unique_pending_approval_per_entity",
+            )
+        ]
+        verbose_name = "Solicitud de aprobación"
+        verbose_name_plural = "Solicitudes de aprobación"
+
+    def __str__(self):
+        return f"{self.get_entity_type_display()}: {self.title} ({self.get_status_display()})"
+
+
+def document_version_upload_to(instance, filename):
+    """Store opaque names so user filenames cannot collide or leak in URLs."""
+    safe_name = get_valid_filename(filename) or "documento"
+    return f"documents/{instance.document_id}/{uuid4().hex}-{safe_name}"
+
+
+class Document(models.Model):
+    INVOICE = "invoice"
+    QUOTE = "quote"
+    CONTRACT = "contract"
+    RECEIPT = "receipt"
+    BANK = "bank"
+    HR = "hr"
+    OTHER = "other"
+    TYPE_CHOICES = (
+        (INVOICE, "Factura"),
+        (QUOTE, "Cotización"),
+        (CONTRACT, "Contrato"),
+        (RECEIPT, "Soporte / recibo"),
+        (BANK, "Documento bancario"),
+        (HR, "Talento humano"),
+        (OTHER, "Otro"),
+    )
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+    STATUS_CHOICES = ((ACTIVE, "Activo"), (ARCHIVED, "Archivado"))
+
+    business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name="documents")
+    title = models.CharField(max_length=220)
+    document_type = models.CharField(max_length=20, choices=TYPE_CHOICES, default=OTHER)
+    description = models.TextField(blank=True)
+    tags = models.CharField(max_length=300, blank=True, help_text="Etiquetas separadas por comas")
+    entity_type = models.CharField(max_length=50, blank=True)
+    entity_id = models.PositiveBigIntegerField(null=True, blank=True)
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=ACTIVE)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="documents_created")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-updated_at", "-id")
+        indexes = [
+            models.Index(fields=("business", "status", "document_type")),
+            models.Index(fields=("entity_type", "entity_id")),
+        ]
+        verbose_name = "Documento"
+        verbose_name_plural = "Documentos"
+
+    def __str__(self):
+        return self.title
+
+    @property
+    def latest_version(self):
+        return self.versions.order_by("-version").first()
+
+
+class DocumentVersion(models.Model):
+    document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name="versions")
+    version = models.PositiveIntegerField()
+    file = models.FileField(upload_to=document_version_upload_to, max_length=500)
+    original_name = models.CharField(max_length=255)
+    mime_type = models.CharField(max_length=120, blank=True)
+    size = models.PositiveBigIntegerField(default=0)
+    notes = models.TextField(blank=True)
+    uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="document_versions_uploaded")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-version",)
+        constraints = [
+            models.UniqueConstraint(fields=("document", "version"), name="unique_document_version")
+        ]
+        verbose_name = "Versión documental"
+        verbose_name_plural = "Versiones documentales"
+
+    def __str__(self):
+        return f"{self.document.title} v{self.version}"
+
+
+class APIIdempotencyRecord(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="api_idempotency_records",
+    )
+    key = models.CharField(max_length=255)
+    request_fingerprint = models.CharField(max_length=64)
+    response_status = models.PositiveSmallIntegerField(null=True, blank=True)
+    response_body = models.JSONField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("user", "key"), name="unique_api_idempotency_key_per_user"
+            )
+        ]
+        indexes = [
+            models.Index(fields=("created_at",), name="api_idem_created_idx")
+        ]
+        verbose_name = "Registro de idempotencia API"
+        verbose_name_plural = "Registros de idempotencia API"
+
+
+class WebhookEndpoint(models.Model):
+    INVOICE_CREATED = "invoice.created"
+    INVOICE_PAID = "invoice.paid"
+    PAYMENT_REGISTERED = "payment.registered"
+    FINANCIAL_ENTRY_CREATED = "financial_entry.created"
+    EVENT_CHOICES = (
+        (INVOICE_CREATED, "Factura creada"),
+        (INVOICE_PAID, "Factura pagada"),
+        (PAYMENT_REGISTERED, "Pago registrado"),
+        (FINANCIAL_ENTRY_CREATED, "Movimiento financiero creado"),
+    )
+
+    name = models.CharField(max_length=120)
+    url = models.URLField(max_length=500)
+    secret = models.CharField(max_length=128)
+    event_types = models.JSONField(default=list)
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="webhook_endpoints_created",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("name", "id")
+        verbose_name = "Endpoint webhook"
+        verbose_name_plural = "Endpoints webhook"
+
+    def __str__(self):
+        return self.name
+
+
+class WebhookDelivery(models.Model):
+    PENDING = "pending"
+    DELIVERED = "delivered"
+    FAILED = "failed"
+    STATUS_CHOICES = (
+        (PENDING, "Pendiente"),
+        (DELIVERED, "Entregada"),
+        (FAILED, "Fallida"),
+    )
+
+    endpoint = models.ForeignKey(
+        WebhookEndpoint,
+        on_delete=models.PROTECT,
+        related_name="deliveries",
+    )
+    event = models.CharField(max_length=80)
+    target_url = models.URLField(max_length=500)
+    payload = models.JSONField()
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=PENDING)
+    attempts = models.PositiveIntegerField(default=0)
+    response_status = models.PositiveSmallIntegerField(null=True, blank=True)
+    response_body = models.TextField(blank=True)
+    last_error = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_attempt_at = models.DateTimeField(null=True, blank=True)
+    delivered_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(
+                fields=("status", "created_at"), name="webhook_status_date_idx"
+            ),
+            models.Index(fields=("event", "created_at"), name="webhook_event_date_idx"),
+        ]
+        verbose_name = "Entrega de webhook"
+        verbose_name_plural = "Entregas de webhooks"

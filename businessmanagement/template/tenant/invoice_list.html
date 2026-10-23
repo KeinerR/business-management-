@@ -104,15 +104,18 @@
                                     <a href="{% url 'invoice_edit' invoice.id %}" class="btn btn-sm btn-warning" title="Editar">
                                         <i class="bi bi-pencil"></i>
                                     </a>
+                                    <form method="post" action="{% url 'invoice_issue' invoice.id %}" class="d-inline" onsubmit="return confirm('¿Emitir esta factura?');">
+                                        {% csrf_token %}<button type="submit" class="btn btn-sm btn-primary" title="Emitir"><i class="bi bi-send"></i></button>
+                                    </form>
                                 {% endif %}
                                 <a href="{% url 'invoice_pdf' invoice.id %}" class="btn btn-sm btn-danger" title="Descargar PDF">
                                     <i class="bi bi-file-pdf"></i>
                                 </a>
-                                {% if invoice.status == 'draft' %}
-                                    <form method="post" action="{% url 'invoice_delete' invoice.id %}" style="display: inline;" onsubmit="return confirm('¿Está seguro de que desea eliminar esta factura?');">
+                                {% if invoice.status != 'paid' and invoice.status != 'cancelled' %}
+                                    <form method="post" action="{% url 'invoice_cancel' invoice.id %}" style="display: inline;" onsubmit="return confirm('¿Anular esta factura conservando su trazabilidad?');">
                                         {% csrf_token %}
-                                        <button type="submit" class="btn btn-sm btn-danger" title="Eliminar">
-                                            <i class="bi bi-trash"></i>
+                                        <button type="submit" class="btn btn-sm btn-outline-danger" title="Anular">
+                                            <i class="bi bi-x-circle"></i>
                                         </button>
                                     </form>
                                 {% endif %}

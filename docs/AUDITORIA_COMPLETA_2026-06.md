@@ -1,6 +1,8 @@
 # AUDITORÍA COMPLETA — BUSINESS MANAGEMENT (SystemManager)
 **Fecha:** Junio 2026 · **Stack:** Django 5.1 + django-tenants 3.7 + PostgreSQL + Celery/Redis + Bootstrap 5 (SSR) · **Verificación runtime:** ✅ `manage.py check` OK, migraciones OK, servidor arranca, schema público y tenant responden 200.
 
+> Esta auditoría conserva el diagnóstico original. El avance vigente y el punto exacto de continuación se mantienen en [`ESTADO_IMPLEMENTACION.md`](ESTADO_IMPLEMENTACION.md).
+
 ---
 
 # 1. FUNCIONALIDADES EXISTENTES

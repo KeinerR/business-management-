@@ -1,0 +1,11 @@
+{% extends "tenant/base.html" %}
+{% block title %}Aprobación {{ approval.id }} | System Manager{% endblock %}
+{% block workspace_content %}
+<div class="container py-3" style="max-width:900px">
+  <div class="d-flex justify-content-between mb-3"><h2 class="h4">{{ approval.title }}</h2><a class="btn btn-outline-secondary" href="{% url 'approval_list' %}">Volver</a></div>
+  <div class="card mb-3"><div class="card-body row g-3"><div class="col-md-4"><small class="text-muted">Estado</small><div><strong>{{ approval.get_status_display }}</strong></div></div><div class="col-md-4"><small class="text-muted">Monto</small><div><strong>{{ approval.amount|floatformat:2 }} {{ approval.currency }}</strong></div></div><div class="col-md-4"><small class="text-muted">Solicitante</small><div>{{ approval.requested_by.get_username }}</div></div><div class="col-12"><small class="text-muted">Justificación</small><div>{{ approval.reason|default:"Sin observaciones" }}</div></div>{% if approval.reviewed_by %}<div class="col-12"><small class="text-muted">Decisión de {{ approval.reviewed_by.get_username }}</small><div>{{ approval.decision_notes|default:"Sin observaciones" }}</div></div>{% endif %}</div></div>
+  {% if approval.status == 'pending' %}
+  <form method="post" action="{% url 'approval_decide' approval.id %}" class="card card-body">{% csrf_token %}{{ decision_form.decision_notes.label_tag }}{{ decision_form.decision_notes }}<div class="mt-3 d-flex gap-2"><button class="btn btn-success" type="submit" name="action" value="approved">Aprobar</button><button class="btn btn-danger" type="submit" name="action" value="rejected">Rechazar</button></div></form>
+  {% endif %}
+</div>
+{% endblock %}

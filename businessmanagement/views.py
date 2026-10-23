@@ -10,12 +10,13 @@ from django.contrib.auth.models import Group
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ObjectDoesNotExist
 from django.conf import settings
-from django.db import connection, transaction
+from django.db import connection, transaction, OperationalError, ProgrammingError
 from django.db.models import Count, Sum, Q
 from django.core.paginator import Paginator
-from django.http import HttpResponse
+from django.http import FileResponse, HttpResponse, Http404
 from django.shortcuts import redirect, render
 from django.utils.http import url_has_allowed_host_and_scheme
+from django.utils import timezone
 from django.views.decorators.http import require_POST
 import io
 import csv
@@ -32,6 +33,7 @@ from tenantdata.models import (
     FinancialEntry,
     ThirdParty,
     Invoice,
+    InvoiceItem,
     Project,
     FinancialCategory,
     Payment,
@@ -49,6 +51,11 @@ from tenantdata.models import (
     ImportedRecord,
     DebitNote,
     QuoteItem,
+    Notification,
+    ApprovalRequest,
+    Account,
+    Document,
+    DocumentVersion,
 )
 
 
@@ -76,8 +83,18 @@ from .forms import (
     ReconciliationConfirmForm,
     GenericImportUploadForm,
     BankAccountForm,
+    ApprovalRequestForm,
+    ApprovalDecisionForm,
+    AccountForm,
+    DocumentCreateForm,
+    DocumentVersionForm,
 )
 from .models import Domain, Tenant
+from .services.notifications import notify_users
+from .services.accounting import seed_puc_starter
+from .services.forecast import budget_performance, cashflow_forecast
+from .services.document_management import add_document_version
+from .services.imports import confirm_batch, preview_batch, read_import_rows, rollback_batch
 from .modules import AVAILABLE_MODULES, MODULES_INDIVIDUAL, MODULES_BUSINESS, MODULE_GROUPS
 
 logger = logging.getLogger(__name__)
@@ -226,6 +243,11 @@ def platform_required(view_func):
 
 
 def home(request):
+    if request.user.is_authenticated:
+        if is_tenant_request(request):
+            return redirect("dashboard")
+        if request.user.is_staff or request.user.is_superuser:
+            return redirect("platform_dashboard")
     return render(request, "guest/home.html")
 
 
@@ -242,6 +264,8 @@ def login_view(request):
             request.user.is_staff or request.user.is_superuser
         ):
             return redirect("platform_dashboard")
+        if not is_tenant_request(request):
+            return redirect("home")
         return redirect("dashboard")
 
     form = AuthenticationForm(request, data=request.POST or None)
@@ -304,10 +328,16 @@ def dashboard_view(request):
             "El dashboard solo esta disponible desde el dominio de una empresa.",
         )
         return redirect("login")
+    tenant = request.tenant
+    enabled_modules = set(tenant.enabled_modules or [])
     business = Business.objects.first()
-    employee_count = Employee.objects.count()
-    user_count = get_user_model().objects.count()
-    third_party_count = ThirdParty.objects.filter(is_active=True).count()
+    employee_count = Employee.objects.count() if "employees" in enabled_modules else 0
+    user_count = get_user_model().objects.count() if "users" in enabled_modules else 0
+    third_party_count = (
+        ThirdParty.objects.filter(is_active=True).count()
+        if "third_parties" in enabled_modules
+        else 0
+    )
     pending_count = FinancialEntry.objects.filter(
         status__in=[FinancialEntry.PENDING, FinancialEntry.PARTIAL]
     ).count()
@@ -322,24 +352,27 @@ def dashboard_view(request):
     latest_rates = CurrencyRate.objects.order_by("-rate_date", "currency")[:3]
 
     today = date.today()
-    # Datos para la gráfica de ingresos vs egresos del mes actual
     current_month_start = date(today.year, today.month, 1)
     current_month_entries = FinancialEntry.objects.filter(
         entry_date__gte=current_month_start,
-        entry_date__lte=today
+        entry_date__lte=today,
+        currency="COP",
     )
-    income_current_month = current_month_entries.filter(entry_type=FinancialEntry.INCOME).aggregate(Sum('amount'))['amount__sum'] or Decimal('0.00')
-    expense_current_month = current_month_entries.filter(entry_type=FinancialEntry.EXPENSE).aggregate(Sum('amount'))['amount__sum'] or Decimal('0.00')
-
-    # Asegurarse de que los valores sean flotantes para Chart.js
-    income_current_month_float = float(income_current_month)
-    expense_current_month_float = float(expense_current_month)
+    income_current_month = current_month_entries.filter(
+        entry_type=FinancialEntry.INCOME
+    ).aggregate(Sum("amount"))["amount__sum"] or Decimal("0.00")
+    expense_current_month = current_month_entries.filter(
+        entry_type=FinancialEntry.EXPENSE
+    ).aggregate(Sum("amount"))["amount__sum"] or Decimal("0.00")
+    monthly_max = max(income_current_month, expense_current_month, Decimal("1.00"))
 
     return render(
         request,
         "dashboard.html",
         {
             "business": business,
+            "tenant_type": tenant.tenant_type,
+            "enabled_modules": enabled_modules,
             "employee_count": employee_count,
             "user_count": user_count,
             "third_party_count": third_party_count,
@@ -353,8 +386,10 @@ def dashboard_view(request):
             "latest_entries": latest_entries,
             "latest_audit_events": latest_audit_events,
             "latest_rates": latest_rates,
-            "income_current_month": income_current_month_float,
-            "expense_current_month": expense_current_month_float,
+            "income_current_month": income_current_month,
+            "expense_current_month": expense_current_month,
+            "income_current_month_percent": int(income_current_month * 100 / monthly_max),
+            "expense_current_month_percent": int(expense_current_month * 100 / monthly_max),
         },
     )
 
@@ -523,19 +558,161 @@ def budget_detail(request, budget_id):
         messages.error(request, "Presupuesto no encontrado.")
         return redirect("budget_list")
     
-    return render(request, "tenant/budget_detail.html", {"budget": budget, "page_title": f"Detalle Presupuesto: {budget.name}"})
+    performance_rows, performance_totals = budget_performance(budget)
+    forecast_rows = cashflow_forecast(
+        budget.business, budget.period_start_date, budget.period_end_date
+    )
+    return render(request, "tenant/budget_detail.html", {
+        "budget": budget,
+        "page_title": f"Detalle Presupuesto: {budget.name}",
+        "performance_rows": performance_rows,
+        "performance_totals": performance_totals,
+        "forecast_rows": forecast_rows,
+    })
+
+
+@login_required
+@tenant_required
+@module_enabled_required("budget")
+def forecast_dashboard(request):
+    business = Business.objects.first()
+    today = date.today()
+    try:
+        days = min(max(int(request.GET.get("days", 90)), 30), 365)
+    except (TypeError, ValueError):
+        days = 90
+    end_date = today + timedelta(days=days)
+    rows = cashflow_forecast(business, today, end_date) if business else []
+    return render(request, "tenant/forecast_dashboard.html", {"forecast_rows": rows, "start_date": today, "end_date": end_date, "days": days})
+
+
+@login_required
+@tenant_required
+@module_enabled_required("documents")
+def document_list(request):
+    documents = Document.objects.select_related("created_by", "business").prefetch_related("versions").filter(
+        business=Business.objects.first()
+    )
+    status = request.GET.get("status", Document.ACTIVE)
+    document_type = request.GET.get("type", "")
+    query = request.GET.get("q", "").strip()
+    if status in dict(Document.STATUS_CHOICES):
+        documents = documents.filter(status=status)
+    if document_type in dict(Document.TYPE_CHOICES):
+        documents = documents.filter(document_type=document_type)
+    if query:
+        documents = documents.filter(Q(title__icontains=query) | Q(description__icontains=query) | Q(tags__icontains=query))
+    return render(request, "tenant/document_list.html", {
+        "documents": Paginator(documents, 25).get_page(request.GET.get("page", 1)),
+        "status_choices": Document.STATUS_CHOICES,
+        "type_choices": Document.TYPE_CHOICES,
+        "selected_status": status,
+        "selected_type": document_type,
+        "query": query,
+    })
+
+
+@login_required
+@tenant_required
+@module_enabled_required("documents")
+@tenant_group_required("Administrador de empresa", "Operador financiero")
+def document_create(request):
+    business = Business.objects.first()
+    if not business:
+        messages.error(request, "Primero debes crear la empresa asociada al tenant.")
+        return redirect("dashboard")
+    form = DocumentCreateForm(request.POST or None, request.FILES or None)
+    if request.method == "POST" and form.is_valid():
+        with transaction.atomic():
+            document = form.save(commit=False)
+            document.business = business
+            document.created_by = request.user
+            document.save()
+            version = add_document_version(document, form.cleaned_data["file"], request.user, form.cleaned_data["version_notes"])
+            record_audit_event(request, AuditEvent.CREATE, "document", f"Documento creado: {document.title} (v{version.version})", document.pk)
+        messages.success(request, "Documento y primera versión guardados.")
+        return redirect("document_detail", document_id=document.pk)
+    return render(request, "tenant/document_form.html", {"form": form})
+
+
+@login_required
+@tenant_required
+@module_enabled_required("documents")
+def document_detail(request, document_id):
+    document = Document.objects.select_related("created_by").prefetch_related("versions__uploaded_by").filter(
+        pk=document_id, business=Business.objects.first()
+    ).first()
+    if not document:
+        raise Http404("Documento no encontrado")
+    return render(request, "tenant/document_detail.html", {"document": document, "version_form": DocumentVersionForm()})
+
+
+@login_required
+@tenant_required
+@module_enabled_required("documents")
+@tenant_group_required("Administrador de empresa", "Operador financiero")
+@require_POST
+def document_add_version(request, document_id):
+    document = Document.objects.filter(pk=document_id, business=Business.objects.first(), status=Document.ACTIVE).first()
+    if not document:
+        messages.error(request, "El documento no existe o está archivado.")
+        return redirect("document_list")
+    form = DocumentVersionForm(request.POST, request.FILES)
+    if form.is_valid():
+        version = add_document_version(document, form.cleaned_data["file"], request.user, form.cleaned_data["notes"])
+        record_audit_event(request, AuditEvent.UPDATE, "document", f"Nueva versión de {document.title}: v{version.version}", document.pk)
+        messages.success(request, f"Versión {version.version} agregada sin alterar las anteriores.")
+    else:
+        messages.error(request, "No se pudo cargar la versión: " + " ".join(sum(form.errors.values(), [])))
+    return redirect("document_detail", document_id=document.pk)
+
+
+@login_required
+@tenant_required
+@module_enabled_required("documents")
+def document_download(request, document_id, version_id):
+    version = DocumentVersion.objects.select_related("document").filter(
+        pk=version_id, document_id=document_id, document__business=Business.objects.first()
+    ).first()
+    if not version or not version.file:
+        raise Http404("Archivo no encontrado")
+    try:
+        response = FileResponse(version.file.open("rb"), content_type=version.mime_type or "application/octet-stream")
+    except FileNotFoundError as exc:
+        raise Http404("El archivo físico no está disponible") from exc
+    response["Content-Disposition"] = f'attachment; filename="{version.original_name.replace(chr(34), "")}"'
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@login_required
+@tenant_required
+@module_enabled_required("documents")
+@tenant_group_required("Administrador de empresa")
+@require_POST
+def document_archive(request, document_id):
+    document = Document.objects.filter(pk=document_id, business=Business.objects.first()).first()
+    if not document:
+        raise Http404("Documento no encontrado")
+    document.status = Document.ARCHIVED if document.status == Document.ACTIVE else Document.ACTIVE
+    document.save(update_fields=["status", "updated_at"])
+    record_audit_event(request, AuditEvent.UPDATE, "document", f"Documento {document.get_status_display().lower()}: {document.title}", document.pk)
+    messages.success(request, f"Documento marcado como {document.get_status_display().lower()}.")
+    return redirect("document_detail", document_id=document.pk)
 
 
 @login_required
 @platform_required
 def platform_dashboard(request):
-    tenants = Tenant.objects.exclude(
-        schema_name=settings.PUBLIC_SCHEMA_NAME
-    ).prefetch_related("domains")
+    tenants = Tenant.objects.exclude(schema_name=settings.PUBLIC_SCHEMA_NAME)
     tenant_count = tenants.count()
-    domain_count = Domain.objects.exclude(
-        tenant__schema_name=settings.PUBLIC_SCHEMA_NAME
+    active_tenant_count = tenants.filter(is_active=True).count()
+    inactive_tenant_count = tenant_count - active_tenant_count
+    attention_tenant_count = tenants.filter(
+        Q(renewal_date__lte=timezone.localdate() + timedelta(days=30))
+        | Q(service_status__in=(Tenant.SERVICE_PAST_DUE, Tenant.SERVICE_SUSPENDED))
     ).count()
+    domain_count = Domain.objects.exclude(tenant__schema_name=settings.PUBLIC_SCHEMA_NAME).count()
     primary_domains = Domain.objects.filter(is_primary=True).exclude(
         tenant__schema_name=settings.PUBLIC_SCHEMA_NAME
     )
@@ -543,28 +720,16 @@ def platform_dashboard(request):
         tenant__schema_name=settings.PUBLIC_SCHEMA_NAME
     ).count()
     tenant_snapshots = []
-    for tenant in tenants.order_by("-created_on")[:6]:
-        snapshot = {
-            "tenant": tenant,
-            "employee_count": None,
-            "entry_count": None,
-            "latest_activity": None,
-            "status": "Sin migrar",
-        }
-        try:
-            with schema_context(tenant.schema_name):
-                snapshot["employee_count"] = Employee.objects.count()
-                snapshot["entry_count"] = FinancialEntry.objects.count()
-                snapshot["latest_activity"] = AuditEvent.objects.first()
-                snapshot["status"] = "Operativo"
-        except Exception:
-            connection.set_schema_to_public()
-        tenant_snapshots.append(snapshot)
+    for tenant in tenants.prefetch_related("domains").order_by("-created_on")[:6]:
+        tenant_snapshots.append(_platform_tenant_snapshot(tenant))
     return render(
         request,
         "platform/dashboard.html",
         {
             "tenant_count": tenant_count,
+            "active_tenant_count": active_tenant_count,
+            "inactive_tenant_count": inactive_tenant_count,
+            "attention_tenant_count": attention_tenant_count,
             "domain_count": domain_count,
             "public_domain_count": public_domain_count,
             "primary_domains": primary_domains[:6],
@@ -576,12 +741,136 @@ def platform_dashboard(request):
 @login_required
 @platform_required
 def platform_tenant_list(request):
-    tenants = (
+    queryset = Tenant.objects.exclude(
+        schema_name=settings.PUBLIC_SCHEMA_NAME
+    ).prefetch_related("domains").order_by("name")
+    search = request.GET.get("q", "").strip()
+    service_status = request.GET.get("status", "").strip()
+    renewal_filter = request.GET.get("renewal", "").strip()
+    if search:
+        queryset = queryset.filter(
+            Q(name__icontains=search)
+            | Q(schema_name__icontains=search)
+            | Q(service_plan__icontains=search)
+            | Q(domains__domain__icontains=search)
+        ).distinct()
+    if service_status in dict(Tenant.SERVICE_STATUS_CHOICES):
+        queryset = queryset.filter(service_status=service_status)
+    if renewal_filter == "soon":
+        queryset = queryset.filter(
+            renewal_date__gte=timezone.localdate(),
+            renewal_date__lte=timezone.localdate() + timedelta(days=30),
+        )
+    elif renewal_filter == "overdue":
+        queryset = queryset.filter(renewal_date__lt=timezone.localdate())
+
+    paginator = Paginator(queryset, 25)
+    page_obj = paginator.get_page(request.GET.get("page"))
+    tenant_cards = [
+        _platform_tenant_snapshot(tenant)
+        for tenant in page_obj.object_list
+    ]
+    return render(
+        request,
+        "platform/tenant_list.html",
+        {
+            "tenant_cards": tenant_cards,
+            "page_obj": page_obj,
+            "search": search,
+            "selected_status": service_status,
+            "selected_renewal": renewal_filter,
+            "status_choices": Tenant.SERVICE_STATUS_CHOICES,
+            "today": timezone.localdate(),
+        },
+    )
+
+
+def _platform_tenant_snapshot(tenant):
+    snapshot = {
+        "tenant": tenant,
+        "business": None,
+        "employee_count": None,
+        "user_count": None,
+        "entry_count": None,
+        "invoice_count": None,
+        "latest_activity": None,
+        "schema_ready": True,
+    }
+    try:
+        with schema_context(tenant.schema_name):
+            snapshot["business"] = Business.objects.first()
+            snapshot["employee_count"] = Employee.objects.count()
+            snapshot["user_count"] = get_user_model().objects.count()
+            snapshot["entry_count"] = FinancialEntry.objects.count()
+            snapshot["invoice_count"] = Invoice.objects.count()
+            snapshot["latest_activity"] = AuditEvent.objects.first()
+    except (OperationalError, ProgrammingError):
+        snapshot["schema_ready"] = False
+    return snapshot
+
+
+@login_required
+@platform_required
+def platform_tenant_detail(request, tenant_id):
+    tenant = (
         Tenant.objects.exclude(schema_name=settings.PUBLIC_SCHEMA_NAME)
         .prefetch_related("domains")
-        .order_by("name")
+        .filter(pk=tenant_id)
+        .first()
     )
-    return render(request, "platform/tenant_list.html", {"tenants": tenants})
+    if not tenant:
+        raise Http404("Tenant no encontrado")
+    snapshot = _platform_tenant_snapshot(tenant)
+    recent_activity = []
+    tenant_admins = []
+    if snapshot["schema_ready"]:
+        try:
+            with schema_context(tenant.schema_name):
+                recent_activity = list(AuditEvent.objects.select_related("actor")[:12])
+                tenant_admins = list(
+                    get_user_model().objects.filter(is_superuser=True).order_by("username")[:10]
+                )
+        except (OperationalError, ProgrammingError):
+            snapshot["schema_ready"] = False
+    return render(
+        request,
+        "platform/tenant_detail.html",
+        {
+            **snapshot,
+            "recent_activity": recent_activity,
+            "tenant_admins": tenant_admins,
+            "enabled_module_labels": [
+                label
+                for value, label in AVAILABLE_MODULES
+                if value in tenant.enabled_modules
+            ],
+        },
+    )
+
+
+@login_required
+@platform_required
+@require_POST
+def platform_tenant_toggle_active(request, tenant_id):
+    tenant = (
+        Tenant.objects.exclude(schema_name=settings.PUBLIC_SCHEMA_NAME)
+        .filter(pk=tenant_id)
+        .first()
+    )
+    if not tenant:
+        raise Http404("Tenant no encontrado")
+    tenant.is_active = not tenant.is_active
+    if tenant.is_active and tenant.service_status == Tenant.SERVICE_SUSPENDED:
+        tenant.service_status = Tenant.SERVICE_ACTIVE
+    elif not tenant.is_active and tenant.service_status in (
+        Tenant.SERVICE_ACTIVE,
+        Tenant.SERVICE_TRIAL,
+    ):
+        tenant.service_status = Tenant.SERVICE_SUSPENDED
+    tenant.save(update_fields=("is_active", "service_status"))
+    state = "activado" if tenant.is_active else "suspendido"
+    messages.success(request, f"El acceso de {tenant.name} fue {state}.")
+    return redirect("platform_tenant_detail", tenant_id=tenant.pk)
 
 
 @login_required
@@ -1124,6 +1413,16 @@ def financial_entry_list(request):
         page_size = 25
     paginator = Paginator(entries.order_by("-entry_date", "-created_at"), page_size)
     entries_page = paginator.get_page(page_num)
+    expense_ids = [
+        entry.pk for entry in entries_page if entry.entry_type == FinancialEntry.EXPENSE
+    ]
+    approval_map = {}
+    for approval in ApprovalRequest.objects.filter(
+        entity_type=ApprovalRequest.EXPENSE, entity_id__in=expense_ids
+    ).order_by("entity_id", "-requested_at"):
+        approval_map.setdefault(approval.entity_id, approval)
+    for entry in entries_page:
+        entry.approval_request = approval_map.get(entry.pk)
 
     return render(
         request,
@@ -1425,6 +1724,170 @@ def audit_event_list(request):
     return render(request, "tenant/audit_events.html", {"events": events_page})
 
 
+def _approval_target(entity_type, entity_id):
+    if entity_type == ApprovalRequest.QUOTE:
+        target = Quote.objects.select_related("business").filter(pk=entity_id).first()
+        if target:
+            return target, target.business, f"Cotización {target.quote_number}", target.total, target.currency, f"/quotes/{target.pk}/"
+    elif entity_type == ApprovalRequest.EXPENSE:
+        target = FinancialEntry.objects.select_related("business").filter(
+            pk=entity_id, entry_type=FinancialEntry.EXPENSE
+        ).first()
+        if target:
+            return target, target.business, target.concept, target.amount, target.currency, "/finance/"
+    return None
+
+
+@login_required
+@tenant_required
+@module_enabled_required("approvals")
+@tenant_group_required("Administrador de empresa", "Operador financiero")
+def approval_request_create(request, entity_type, entity_id):
+    target_data = _approval_target(entity_type, entity_id)
+    if not target_data:
+        messages.error(request, "El documento no existe o no admite aprobación.")
+        return redirect("approval_list")
+    target, business, title, amount, currency, link = target_data
+    existing = ApprovalRequest.objects.filter(
+        entity_type=entity_type, entity_id=entity_id, status=ApprovalRequest.PENDING
+    ).first()
+    if existing:
+        messages.info(request, "Este documento ya tiene una aprobación pendiente.")
+        return redirect("approval_detail", approval_id=existing.pk)
+
+    form = ApprovalRequestForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        approval = ApprovalRequest.objects.create(
+            business=business,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            title=title,
+            amount=amount,
+            currency=currency,
+            reason=form.cleaned_data["reason"],
+            requested_by=request.user,
+        )
+        notify_users(
+            title=f"Aprobación pendiente: {title}",
+            message=f"{request.user.get_username()} solicita aprobar {amount} {currency}.",
+            link=f"/approvals/{approval.pk}/",
+            level=Notification.WARNING,
+            entity="approval",
+            entity_id=approval.pk,
+            dedupe_key=f"approval-pending-{approval.pk}",
+            group_names=("Administrador de empresa",),
+        )
+        record_audit_event(request, AuditEvent.CREATE, "approval", f"Aprobación solicitada: {title}", approval.pk)
+        messages.success(request, "Solicitud de aprobación creada.")
+        return redirect("approval_detail", approval_id=approval.pk)
+    return render(request, "tenant/approval_request_form.html", {"form": form, "target_title": title, "amount": amount, "currency": currency})
+
+
+@login_required
+@tenant_required
+@module_enabled_required("approvals")
+@tenant_group_required("Administrador de empresa", "Operador financiero")
+def approval_list(request):
+    approvals = ApprovalRequest.objects.select_related("requested_by", "reviewed_by")
+    status = request.GET.get("status")
+    if status:
+        approvals = approvals.filter(status=status)
+    return render(request, "tenant/approval_list.html", {"approvals": approvals[:100], "status_choices": ApprovalRequest.STATUS_CHOICES, "selected_status": status or ""})
+
+
+@login_required
+@tenant_required
+@module_enabled_required("approvals")
+@tenant_group_required("Administrador de empresa", "Operador financiero")
+def approval_detail(request, approval_id):
+    approval = ApprovalRequest.objects.select_related("requested_by", "reviewed_by").filter(pk=approval_id).first()
+    if not approval:
+        messages.error(request, "Solicitud no encontrada.")
+        return redirect("approval_list")
+    return render(request, "tenant/approval_detail.html", {"approval": approval, "decision_form": ApprovalDecisionForm()})
+
+
+@login_required
+@tenant_required
+@module_enabled_required("approvals")
+@tenant_group_required("Administrador de empresa")
+@require_POST
+def approval_decide(request, approval_id):
+    form = ApprovalDecisionForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, "Complete correctamente la decisión.")
+        return redirect("approval_detail", approval_id=approval_id)
+    with transaction.atomic():
+        approval = ApprovalRequest.objects.select_for_update().filter(pk=approval_id).first()
+        if not approval:
+            messages.error(request, "Solicitud no encontrada.")
+            return redirect("approval_list")
+        if approval.status != ApprovalRequest.PENDING:
+            messages.info(request, "Esta solicitud ya fue decidida.")
+            return redirect("approval_detail", approval_id=approval.pk)
+        approval.status = form.cleaned_data["action"]
+        approval.decision_notes = form.cleaned_data["decision_notes"]
+        approval.reviewed_by = request.user
+        approval.reviewed_at = timezone.now()
+        approval.save(update_fields=["status", "decision_notes", "reviewed_by", "reviewed_at"])
+        Notification.objects.create(
+            recipient=approval.requested_by,
+            title=f"Solicitud {approval.get_status_display().lower()}: {approval.title}",
+            message=approval.decision_notes or f"Decisión registrada por {request.user.get_username()}.",
+            link=f"/approvals/{approval.pk}/",
+            level=Notification.SUCCESS if approval.status == ApprovalRequest.APPROVED else Notification.DANGER,
+            entity="approval",
+            entity_id=str(approval.pk),
+            dedupe_key=f"approval-decision-{approval.pk}",
+        )
+        record_audit_event(request, AuditEvent.UPDATE, "approval", f"Solicitud {approval.get_status_display()}: {approval.title}", approval.pk)
+    messages.success(request, f"Solicitud {approval.get_status_display().lower()}.")
+    return redirect("approval_detail", approval_id=approval.pk)
+
+
+@login_required
+@tenant_required
+def notification_list(request):
+    notifications = Notification.objects.filter(recipient=request.user)
+    if request.GET.get("status") == "unread":
+        notifications = notifications.filter(is_read=False)
+    paginator = Paginator(notifications, 30)
+    return render(
+        request,
+        "tenant/notification_list.html",
+        {"notifications": paginator.get_page(request.GET.get("page", 1))},
+    )
+
+
+@login_required
+@tenant_required
+@require_POST
+def notification_read_all(request):
+    Notification.objects.filter(recipient=request.user, is_read=False).update(
+        is_read=True, read_at=timezone.now()
+    )
+    messages.success(request, "Notificaciones marcadas como leídas.")
+    return redirect("notification_list")
+
+
+@login_required
+@tenant_required
+def notification_open(request, notification_id):
+    notification = Notification.objects.filter(
+        pk=notification_id, recipient=request.user
+    ).first()
+    if not notification:
+        messages.error(request, "Notificación no encontrada.")
+        return redirect("notification_list")
+    if not notification.is_read:
+        notification.is_read = True
+        notification.read_at = timezone.now()
+        notification.save(update_fields=["is_read", "read_at"])
+    if notification.link.startswith("/") and not notification.link.startswith("//"):
+        return redirect(notification.link)
+    return redirect("notification_list")
+
+
 @login_required
 def create_business(request):
     return redirect_platform_managed_section(request)
@@ -1473,6 +1936,30 @@ def invoice_list(request):
     )
 
 
+def _validated_line_items(request):
+    descriptions = request.POST.getlist("item_description")
+    quantities = request.POST.getlist("item_quantity")
+    prices = request.POST.getlist("item_price")
+    items = []
+    for description, quantity, price in zip(descriptions, quantities, prices):
+        description = description.strip()
+        if not description and not quantity and not price:
+            continue
+        try:
+            quantity_value = Decimal(quantity)
+            price_value = Decimal(price)
+        except (InvalidOperation, TypeError, ValueError):
+            raise ValueError("Todas las líneas deben tener cantidad y precio válidos.")
+        if not description:
+            raise ValueError("Todas las líneas deben tener una descripción.")
+        if quantity_value <= 0 or price_value <= 0:
+            raise ValueError("La cantidad y el precio deben ser mayores que cero.")
+        items.append((description, quantity_value, price_value))
+    if not items:
+        raise ValueError("Agregue al menos una línea al documento.")
+    return items
+
+
 @login_required
 @tenant_required
 @module_enabled_required("invoices")
@@ -1494,28 +1981,22 @@ def invoice_create(request):
             invoice.created_by = request.user
 
             # Procesar items
-            items_data = request.POST.getlist("item_description") # B2 FIX: Removed duplicated function
-            quantities = request.POST.getlist("item_quantity")
-            prices = request.POST.getlist("item_price")
-
             try:
+                line_items = _validated_line_items(request)
                 with transaction.atomic():
                     invoice.save()
                     subtotal = Decimal("0")
 
-                    for desc, qty, price in zip(items_data, quantities, prices):
-                        if desc and qty and price:
-                            qty_dec = Decimal(qty)
-                            price_dec = Decimal(price)
-                            item_subtotal = qty_dec * price_dec
-                            InvoiceItem.objects.create(
-                                invoice=invoice,
-                                description=desc,
-                                quantity=qty_dec,
-                                unit_price=price_dec,
-                                subtotal=item_subtotal,
-                            )
-                            subtotal += item_subtotal
+                    for desc, qty_dec, price_dec in line_items:
+                        item_subtotal = qty_dec * price_dec
+                        InvoiceItem.objects.create(
+                            invoice=invoice,
+                            description=desc,
+                            quantity=qty_dec,
+                            unit_price=price_dec,
+                            subtotal=item_subtotal,
+                        )
+                        subtotal += item_subtotal
 
                     invoice.tax_rules.set(form.cleaned_data["tax_rules"])
                     invoice.calculate_totals(subtotal)
@@ -1534,8 +2015,8 @@ def invoice_create(request):
                     )
                     messages.success(request, "Factura creada correctamente.")
                     return redirect("invoice_list")
-            except InvalidOperation:
-                messages.error(request, "Error al crear factura: cantidad o precio inválido.")
+            except (InvalidOperation, ValueError) as exc:
+                messages.error(request, str(exc))
             except Exception as e:
                 messages.error(request, f"Error al crear factura: {str(e)}")
     else:
@@ -1561,6 +2042,9 @@ def invoice_edit(request, invoice_id):
     if invoice is None:
         messages.error(request, "Factura no encontrada.")
         return redirect("invoice_list")
+    if invoice.status != Invoice.DRAFT:
+        messages.warning(request, "Solo se pueden editar facturas en borrador.")
+        return redirect("invoice_detail", invoice_id=invoice.pk)
 
     tenant_type = getattr(request.tenant, "tenant_type", Tenant.TYPE_BUSINESS)
     if request.method == "POST":
@@ -1571,26 +2055,21 @@ def invoice_edit(request, invoice_id):
                     invoice = form.save(commit=False)
                     # Limpiar items anteriores y crear nuevos dentro de la transacción
                     invoice.items.all().delete()
-                    items_data = request.POST.getlist("item_description")
-                    quantities = request.POST.getlist("item_quantity")
-                    prices = request.POST.getlist("item_price")
+                    line_items = _validated_line_items(request)
                     
                     invoice.save()
                     subtotal = Decimal("0")
 
-                    for desc, qty, price in zip(items_data, quantities, prices):
-                        if desc and qty and price:
-                            qty_dec = Decimal(qty)
-                            price_dec = Decimal(price)
-                            item_subtotal = qty_dec * price_dec
-                            InvoiceItem.objects.create(
-                                invoice=invoice,
-                                description=desc,
-                                quantity=qty_dec,
-                                unit_price=price_dec,
-                                subtotal=item_subtotal,
-                            )
-                            subtotal += item_subtotal
+                    for desc, qty_dec, price_dec in line_items:
+                        item_subtotal = qty_dec * price_dec
+                        InvoiceItem.objects.create(
+                            invoice=invoice,
+                            description=desc,
+                            quantity=qty_dec,
+                            unit_price=price_dec,
+                            subtotal=item_subtotal,
+                        )
+                        subtotal += item_subtotal
 
                     invoice.tax_rules.set(form.cleaned_data["tax_rules"])
                     invoice.calculate_totals(subtotal)
@@ -1609,8 +2088,8 @@ def invoice_edit(request, invoice_id):
                     )
                     messages.success(request, "Factura actualizada correctamente.")
                     return redirect("invoice_detail", invoice_id=invoice.pk)
-            except InvalidOperation:
-                messages.error(request, "Error al actualizar factura: cantidad o precio inválido.")
+            except (InvalidOperation, ValueError) as exc:
+                messages.error(request, str(exc))
             except Exception as e:
                 messages.error(request, f"Error al actualizar factura: {str(e)}")
     else:
@@ -1769,7 +2248,8 @@ def invoice_pdf(request, invoice_id):
     # Totals
     totals_data = [
         ["SUBTOTAL", f"${invoice.subtotal:.2f} {invoice.currency}"],
-        ["IVA ({0}%)".format(invoice.tax_percentage), f"${invoice.tax_amount:.2f}"],
+        ["IMPUESTOS", f"${invoice.tax_amount:.2f}"],
+        ["RETENCIONES", f"-${invoice.retention_amount:.2f}"],
         ["TOTAL", f"${invoice.total:.2f} {invoice.currency}"],
     ]
 
@@ -1778,10 +2258,10 @@ def invoice_pdf(request, invoice_id):
         TableStyle(
             [
                 ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
-                ("FONTNAME", (0, 2), (-1, 2), "Helvetica-Bold"),
-                ("FONTSIZE", (0, 2), (-1, 2), 12),
-                ("BACKGROUND", (0, 2), (-1, 2), colors.HexColor("#1f3a93")),
-                ("TEXTCOLOR", (0, 2), (-1, 2), colors.whitesmoke),
+                ("FONTNAME", (0, 3), (-1, 3), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 3), (-1, 3), 12),
+                ("BACKGROUND", (0, 3), (-1, 3), colors.HexColor("#1f3a93")),
+                ("TEXTCOLOR", (0, 3), (-1, 3), colors.whitesmoke),
                 ("GRID", (0, 0), (-1, -1), 1, colors.black),
             ]
         )
@@ -1817,6 +2297,89 @@ def invoice_delete(request, invoice_id):
     return redirect("invoice_list")
 
 
+def _issue_invoice(invoice, created_by_user):
+    """Emite una factura en borrador y crea su cuenta por cobrar una sola vez."""
+    if invoice.status != Invoice.DRAFT:
+        if invoice.financial_entry_id:
+            return invoice.financial_entry
+        raise ValueError("Solo se pueden emitir facturas en borrador.")
+    if invoice.total <= 0 or not invoice.items.exists():
+        raise ValueError("La factura debe tener al menos una línea y total mayor que cero.")
+
+    financial_entry = invoice.financial_entry
+    if financial_entry is None:
+        financial_entry = FinancialEntry.objects.create(
+            business=invoice.business,
+            project=invoice.project,
+            third_party=invoice.third_party,
+            created_by=created_by_user,
+            entry_type=FinancialEntry.ACCOUNT_RECEIVABLE,
+            status=FinancialEntry.PENDING,
+            concept=f"Factura {invoice.invoice_number}",
+            amount=invoice.total,
+            currency=invoice.currency,
+            entry_date=invoice.issue_date,
+            due_date=invoice.due_date,
+            notes=invoice.notes or "",
+            personal=False,
+        )
+        invoice.financial_entry = financial_entry
+    invoice.status = Invoice.ISSUED
+    invoice.save(update_fields=["financial_entry", "status"])
+    return financial_entry
+
+
+@login_required
+@tenant_required
+@module_enabled_required("invoices")
+@tenant_group_required("Administrador de empresa", "Operador financiero")
+@require_POST
+def invoice_issue(request, invoice_id):
+    invoice = Invoice.objects.filter(pk=invoice_id).first()
+    if not invoice:
+        messages.error(request, "Factura no encontrada.")
+        return redirect("invoice_list")
+    try:
+        with transaction.atomic():
+            entry = _issue_invoice(invoice, request.user)
+            record_audit_event(
+                request,
+                AuditEvent.UPDATE,
+                "invoice",
+                f"Factura emitida: {invoice.invoice_number}",
+                entity_id=invoice.pk,
+                metadata={"financial_entry_id": entry.pk, "total": str(invoice.total)},
+            )
+            notify_users(
+                title=f"Factura {invoice.invoice_number} emitida",
+                message=f"Se creó una cuenta por cobrar por {invoice.total} {invoice.currency}.",
+                link=f"/invoices/{invoice.pk}/",
+                level=Notification.INFO,
+                entity="invoice",
+                entity_id=invoice.pk,
+                dedupe_key=f"invoice-issued-{invoice.pk}",
+            )
+    except ValueError as exc:
+        messages.error(request, str(exc))
+    else:
+        messages.success(request, f"Factura {invoice.invoice_number} emitida y enviada a cartera.")
+    return redirect("invoice_detail", invoice_id=invoice.pk)
+
+
+def _cancel_invoice(invoice):
+    if invoice.status == Invoice.CANCELLED:
+        return
+    if invoice.status == Invoice.PAID:
+        raise ValueError("Una factura pagada no puede anularse; use una nota crédito.")
+    if invoice.financial_entry_id and invoice.financial_entry.payments.exists():
+        raise ValueError("La factura tiene pagos registrados; use una nota crédito.")
+    invoice.status = Invoice.CANCELLED
+    invoice.save(update_fields=["status"])
+    if invoice.financial_entry_id:
+        invoice.financial_entry.status = FinancialEntry.CANCELLED
+        invoice.financial_entry.save(update_fields=["status"])
+
+
 @login_required
 @tenant_required
 @module_enabled_required("invoices")
@@ -1829,19 +2392,17 @@ def invoice_cancel(request, invoice_id):
         messages.error(request, "Factura no encontrada.")
         return redirect("invoice_list")
     
-    with transaction.atomic():
-        invoice.status = Invoice.CANCELLED
-        invoice.save(update_fields=["status"])
-        
-        if invoice.financial_entry:
-            invoice.financial_entry.status = FinancialEntry.CANCELLED
-            invoice.financial_entry.save(update_fields=["status"])
-            
-        record_audit_event(
-            request, AuditEvent.UPDATE, "invoice",
-            f"Factura anulada: {invoice.invoice_number}",
-            entity_id=invoice.pk
-        )
+    try:
+        with transaction.atomic():
+            _cancel_invoice(invoice)
+            record_audit_event(
+                request, AuditEvent.UPDATE, "invoice",
+                f"Factura anulada: {invoice.invoice_number}",
+                entity_id=invoice.pk
+            )
+    except ValueError as exc:
+        messages.error(request, str(exc))
+        return redirect("invoice_detail", invoice_id=invoice.pk)
     
     messages.success(request, f"Factura {invoice.invoice_number} anulada correctamente.")
     return redirect("invoice_detail", invoice_id=invoice.pk)
@@ -1995,6 +2556,14 @@ def quote_edit(request, quote_id):
                     quote.tax_rules.set(form.cleaned_data["tax_rules"])
                     quote.calculate_totals(subtotal)
                     quote.save(update_fields=["subtotal", "tax_amount", "retention_amount", "total"])
+                    record_audit_event(
+                        request,
+                        AuditEvent.UPDATE,
+                        "quote",
+                        f"Cotización actualizada: {quote.quote_number}",
+                        entity_id=quote.pk,
+                        metadata={"total": str(quote.total)},
+                    )
                     messages.success(request, "Cotización actualizada correctamente.")
                     return redirect("quote_detail", quote_id=quote.pk)
             except Exception as e:
@@ -2026,7 +2595,10 @@ def quote_detail(request, quote_id):
     if quote is None:
         messages.error(request, "Cotización no encontrada.")
         return redirect("quote_list")
-    return render(request, "tenant/quote_detail.html", {"quote": quote})
+    approval = ApprovalRequest.objects.filter(
+        entity_type=ApprovalRequest.QUOTE, entity_id=quote.pk
+    ).first()
+    return render(request, "tenant/quote_detail.html", {"quote": quote, "approval": approval})
 
 
 @login_required
@@ -2044,6 +2616,22 @@ def quote_accept(request, quote_id):
         messages.info(request, "Solo se puede aceptar una cotización en borrador.")
         return redirect("quote_detail", quote_id=quote.pk)
 
+    if request.tenant.is_module_enabled("approvals"):
+        approved = ApprovalRequest.objects.filter(
+            entity_type=ApprovalRequest.QUOTE,
+            entity_id=quote.pk,
+            status=ApprovalRequest.APPROVED,
+        ).exists()
+        if not approved:
+            messages.warning(request, "La cotización requiere aprobación antes de aceptarse.")
+            return redirect("quote_detail", quote_id=quote.pk)
+
+    if quote.due_date and quote.due_date < date.today():
+        quote.status = Quote.EXPIRED
+        quote.save(update_fields=["status"])
+        messages.warning(request, "La cotización venció y no puede ser aceptada.")
+        return redirect("quote_detail", quote_id=quote.pk)
+
     quote.status = Quote.ACCEPTED
     quote.save(update_fields=["status"])
 
@@ -2055,6 +2643,15 @@ def quote_accept(request, quote_id):
         entity_id=quote.pk,
         metadata={"status": quote.status},
     )
+    notify_users(
+        title=f"Cotización {quote.quote_number} aceptada",
+        message=f"La cotización por {quote.total} {quote.currency} está lista para facturar.",
+        link=f"/quotes/{quote.pk}/",
+        level=Notification.SUCCESS,
+        entity="quote",
+        entity_id=quote.pk,
+        dedupe_key=f"quote-accepted-{quote.pk}",
+    )
 
     messages.success(request, "Cotización aceptada correctamente.")
     return redirect("quote_detail", quote_id=quote.pk)
@@ -2065,17 +2662,14 @@ def _convert_quote_to_invoice(quote: Quote, created_by_user):
     Crea Invoice + InvoiceItems + FinancialEntry para cartera.
     Idempotencia: si quote ya tiene converted_invoice o financial_entry, reutiliza/evita duplicar.
     """
-    if quote.status != Quote.ACCEPTED:
-        raise ValueError("Solo se puede convertir una cotización aceptada.")
-
     if quote.converted_invoice_id and quote.financial_entry_id:
-        # ya convertido
         return quote.converted_invoice, quote.financial_entry
 
-    # Evitar duplicados parciales
+    if quote.status not in (Quote.ACCEPTED, Quote.CONVERTED):
+        raise ValueError("Solo se puede convertir una cotización aceptada.")
+
     if quote.converted_invoice_id:
         invoice = quote.converted_invoice
-        financial_entry = quote.financial_entry
     else:
         invoice = Invoice.objects.create(
             business=quote.business,
@@ -2086,13 +2680,10 @@ def _convert_quote_to_invoice(quote: Quote, created_by_user):
             due_date=quote.due_date,
             description=quote.description,
             notes=quote.notes,
-            tax_percentage=quote.tax_percentage,
             currency=quote.currency,
             created_by=created_by_user,
         )
-        # subtotal/totals
-        invoice.calculate_totals(quote.subtotal)
-        invoice.save()
+        invoice.tax_rules.set(quote.tax_rules.all())
 
         subtotal = Decimal("0")
         for qitem in quote.items.all():
@@ -2107,9 +2698,12 @@ def _convert_quote_to_invoice(quote: Quote, created_by_user):
             subtotal += item_subtotal
 
         invoice.calculate_totals(subtotal)
-        invoice.save(update_fields=["subtotal", "tax_amount", "total"]) # Refactor: save after calculate_totals
+        invoice.save(
+            update_fields=["subtotal", "tax_amount", "retention_amount", "total"]
+        )
 
-        # FinancialEntry
+    financial_entry = quote.financial_entry or invoice.financial_entry
+    if financial_entry is None:
         financial_entry = FinancialEntry.objects.create(
             business=quote.business,
             project=quote.project,
@@ -2127,20 +2721,16 @@ def _convert_quote_to_invoice(quote: Quote, created_by_user):
             personal=False,
         )
 
-        quote.converted_invoice = invoice
-        quote.financial_entry = financial_entry
-        quote.status = Quote.CONVERTED
-        quote.save(update_fields=["converted_invoice", "financial_entry", "status"])
-
-        # enlazar invoice -> financial_entry (OneToOne)
+    if invoice.financial_entry_id != financial_entry.pk:
         invoice.financial_entry = financial_entry
         invoice.save(update_fields=["financial_entry"])
 
-        # Copy tax rules from quote to invoice
-        invoice.tax_rules.set(quote.tax_rules.all())
+    quote.converted_invoice = invoice
+    quote.financial_entry = financial_entry
+    quote.status = Quote.CONVERTED
+    quote.save(update_fields=["converted_invoice", "financial_entry", "status"])
 
-
-    return quote.converted_invoice, quote.financial_entry
+    return invoice, financial_entry
 
 
 @login_required
@@ -2713,6 +3303,29 @@ def _convert_amount(amount, from_currency, to_currency, rate_date):
     return amount_local / to_rate.rate_to_local
 
 
+def _aging_bucket(days_overdue):
+    if days_overdue <= 0:
+        return "current"
+    if days_overdue <= 30:
+        return "days_1_30"
+    if days_overdue <= 60:
+        return "days_31_60"
+    if days_overdue <= 90:
+        return "days_61_90"
+    return "days_90_plus"
+
+
+def _portfolio_risk(overdue_total, total, oldest_days):
+    if total <= 0:
+        return "low", "Bajo"
+    overdue_ratio = overdue_total / total
+    if oldest_days > 90 or overdue_ratio >= Decimal("0.50"):
+        return "high", "Alto"
+    if oldest_days > 30 or overdue_ratio > 0:
+        return "medium", "Medio"
+    return "low", "Bajo"
+
+
 @login_required
 @tenant_required
 @module_enabled_required("cartera")
@@ -2728,6 +3341,7 @@ def cartera_dashboard(request):
 
     type_filter = request.GET.get("type", "receivable")  # receivable | payable
     third_party_filter = request.GET.get("third_party", "")  # id o vacío
+    project_filter = request.GET.get("project", "")
     due_range_days = request.GET.get("due_range_days", "30")
     overdue_only = request.GET.get("overdue_only", "") == "1"
 
@@ -2745,6 +3359,7 @@ def cartera_dashboard(request):
     )
 
     third_parties = ThirdParty.objects.filter(is_active=True).order_by("name")
+    projects = Project.objects.order_by("name")
 
     # Base: sólo entradas de cartera con due_date definido y pendiente
     entries_qs = (
@@ -2759,6 +3374,8 @@ def cartera_dashboard(request):
 
     if third_party_filter:
         entries_qs = entries_qs.filter(third_party_id=third_party_filter)
+    if project_filter:
+        entries_qs = entries_qs.filter(project_id=project_filter)
 
     due_from = today
     due_to = today + timedelta(days=due_range_days_int)
@@ -2797,6 +3414,17 @@ def cartera_dashboard(request):
     overdue_count = 0
     next_due_total = Decimal("0")
     next_due_count = 0
+    aging_totals = {
+        "current": Decimal("0"),
+        "days_1_30": Decimal("0"),
+        "days_31_60": Decimal("0"),
+        "days_61_90": Decimal("0"),
+        "days_90_plus": Decimal("0"),
+    }
+    currency_totals = {}
+    currency_aging = {}
+    currency_overdue = {}
+    currency_next_due = {}
 
     for e in entries_qs.select_related("third_party", "project"):
         remaining = compute_remaining(e)
@@ -2808,27 +3436,50 @@ def cartera_dashboard(request):
             e.due_date and due_from <= e.due_date <= due_to
         )  # incluye hoy
 
+        days_overdue = max((today - e.due_date).days, 0)
+        bucket = _aging_bucket(days_overdue)
+        try:
+            invoice = e.invoice
+        except ObjectDoesNotExist:
+            invoice = None
         row = {
             "entry_id": e.id,
             "concept": e.concept,
             "third_party": e.third_party,
             "third_party_id": e.third_party_id,
             "project_name": e.project.name if e.project else None,
+            "project_id": e.project_id,
+            "invoice_id": invoice.pk if invoice else None,
+            "invoice_number": invoice.invoice_number if invoice else None,
             "due_date": e.due_date,
             "currency": e.currency,
             "remaining": remaining,
             "is_overdue": is_overdue,
             "is_next_due": is_next_due,
+            "days_overdue": days_overdue,
+            "aging_bucket": bucket,
         }
         entry_rows.append(row)
 
         remaining_total += remaining
+        aging_totals[bucket] += remaining
+        currency_totals[e.currency] = currency_totals.get(e.currency, Decimal("0")) + remaining
+        currency_aging.setdefault(
+            e.currency,
+            {key: Decimal("0") for key in aging_totals},
+        )[bucket] += remaining
         if is_overdue:
             overdue_total += remaining
             overdue_count += 1
+            currency_overdue[e.currency] = currency_overdue.get(
+                e.currency, Decimal("0")
+            ) + remaining
         if is_next_due:
             next_due_total += remaining
             next_due_count += 1
+            currency_next_due[e.currency] = currency_next_due.get(
+                e.currency, Decimal("0")
+            ) + remaining
 
     if overdue_only:
         entry_rows = [r for r in entry_rows if r["is_overdue"]]
@@ -2846,6 +3497,27 @@ def cartera_dashboard(request):
             if r["is_next_due"]:
                 next_due_total += r["remaining"]
                 next_due_count += 1
+        aging_totals = {key: Decimal("0") for key in aging_totals}
+        currency_totals = {}
+        currency_aging = {}
+        currency_overdue = {}
+        currency_next_due = {}
+        for r in entry_rows:
+            aging_totals[r["aging_bucket"]] += r["remaining"]
+            currency_totals[r["currency"]] = currency_totals.get(
+                r["currency"], Decimal("0")
+            ) + r["remaining"]
+            currency_aging.setdefault(
+                r["currency"], {key: Decimal("0") for key in aging_totals}
+            )[r["aging_bucket"]] += r["remaining"]
+            if r["is_overdue"]:
+                currency_overdue[r["currency"]] = currency_overdue.get(
+                    r["currency"], Decimal("0")
+                ) + r["remaining"]
+            if r["is_next_due"]:
+                currency_next_due[r["currency"]] = currency_next_due.get(
+                    r["currency"], Decimal("0")
+                ) + r["remaining"]
 
     # Panel por tercero
     # Filtramos terceros sólo los que tengan entries relevantes
@@ -2888,6 +3560,7 @@ def cartera_dashboard(request):
     next_due_total_by_tp = {}
     overdue_count_by_tp = {}
     next_due_count_by_tp = {}
+    oldest_days_by_tp = {}
 
     for r in entry_rows:
         tp_id = r["third_party_id"]
@@ -2897,6 +3570,9 @@ def cartera_dashboard(request):
         if r["is_overdue"]:
             overdue_total_by_tp[tp_id] = overdue_total_by_tp.get(tp_id, Decimal("0")) + r["remaining"]
             overdue_count_by_tp[tp_id] = overdue_count_by_tp.get(tp_id, 0) + 1
+            oldest_days_by_tp[tp_id] = max(
+                oldest_days_by_tp.get(tp_id, 0), r["days_overdue"]
+            )
         if r["is_next_due"]:
             next_due_total_by_tp[tp_id] = next_due_total_by_tp.get(tp_id, Decimal("0")) + r["remaining"]
             next_due_count_by_tp[tp_id] = next_due_count_by_tp.get(tp_id, 0) + 1
@@ -2909,14 +3585,22 @@ def cartera_dashboard(request):
         tp_recent_payments = recent_payments_by_tp.get(tp_id, [])
         tp_next_due_entries = next_due_entries_by_tp.get(tp_id, [])
 
+        tp_total = remaining_total_by_tp.get(tp_id, Decimal("0"))
+        tp_overdue = overdue_total_by_tp.get(tp_id, Decimal("0"))
+        risk_key, risk_label = _portfolio_risk(
+            tp_overdue, tp_total, oldest_days_by_tp.get(tp_id, 0)
+        )
         third_party_rows.append(
             {
                 "third_party": tp,
-                "remaining_total": remaining_total_by_tp.get(tp_id, Decimal("0")),
-                "overdue_total": overdue_total_by_tp.get(tp_id, Decimal("0")),
+                "remaining_total": tp_total,
+                "overdue_total": tp_overdue,
                 "next_due_total": next_due_total_by_tp.get(tp_id, Decimal("0")),
                 "overdue_count": overdue_count_by_tp.get(tp_id, 0),
                 "next_due_count": next_due_count_by_tp.get(tp_id, 0),
+                "risk_key": risk_key,
+                "risk_label": risk_label,
+                "oldest_days": oldest_days_by_tp.get(tp_id, 0),
                 "next_due_entries": [
                     {
                         "due_date": x["due_date"],
@@ -2946,6 +3630,8 @@ def cartera_dashboard(request):
         "type_filter": type_filter,
         "third_parties": third_parties,
         "third_party_filter": third_party_filter,
+        "projects": projects,
+        "project_filter": project_filter,
         "due_range_days": due_range_days_int,
         "overdue_only": overdue_only,
         "totals": {
@@ -2965,13 +3651,29 @@ def cartera_dashboard(request):
             for row in third_party_rows
         ),
         "third_party_rows": third_party_rows,
+        "entry_rows": sorted(entry_rows, key=lambda row: row["due_date"]),
+        "aging_totals": aging_totals,
+        "currency_totals": sorted(currency_totals.items()),
+        "currency_aging": [
+            {"currency": currency, **buckets}
+            for currency, buckets in sorted(currency_aging.items())
+        ],
+        "currency_summary": [
+            {
+                "currency": currency,
+                "total": amount,
+                "overdue": currency_overdue.get(currency, Decimal("0")),
+                "next_due": currency_next_due.get(currency, Decimal("0")),
+            }
+            for currency, amount in sorted(currency_totals.items())
+        ],
     }
     return render(request, "tenant/cartera_dashboard.html", context)
 
 
 @login_required
 @tenant_required
-@module_enabled_required("finances")
+@module_enabled_required("cartera")
 @tenant_group_required("Administrador de empresa", "Operador financiero")
 def cartera_aging_excel_export(request):
     try:
@@ -2986,10 +3688,12 @@ def cartera_aging_excel_export(request):
 
     today = date.today()
     type_filter = request.GET.get("type", "receivable")  # receivable | payable
+    third_party_filter = request.GET.get("third_party", "")
+    project_filter = request.GET.get("project", "")
     entry_type = FinancialEntry.ACCOUNT_RECEIVABLE if type_filter == "receivable" else FinancialEntry.ACCOUNT_PAYABLE
 
     entries_qs = (
-        FinancialEntry.objects.select_related("third_party")
+        FinancialEntry.objects.select_related("third_party", "project")
         .filter(
             entry_type=entry_type,
             status__in=[FinancialEntry.PENDING, FinancialEntry.PARTIAL],
@@ -2997,6 +3701,10 @@ def cartera_aging_excel_export(request):
         )
         .exclude(due_date=None)
     )
+    if third_party_filter:
+        entries_qs = entries_qs.filter(third_party_id=third_party_filter)
+    if project_filter:
+        entries_qs = entries_qs.filter(project_id=project_filter)
 
     payments_by_entry = {}
     payments_qs = Payment.objects.filter(financial_entry__in=entries_qs).order_by("payment_date", "-created_at")
@@ -3292,6 +4000,7 @@ def payment_create(request, entry_id):
                             "status": financial_entry.status,
                         },
                     )
+                    _notify_payment(payment)
 
                 messages.success(
                     request, "Pago registrado correctamente (auto-generado)."
@@ -3323,14 +4032,9 @@ def payment_create(request, entry_id):
                         paid_sum_in_entry_currency_new = (
                             paid_sum_in_entry_currency + amount_in_entry_currency
                         )
-                        if paid_sum_in_entry_currency_new >= financial_entry.amount:
-                            financial_entry.status = FinancialEntry.PAID
-                        elif paid_sum_in_entry_currency_new > 0:
-                            financial_entry.status = FinancialEntry.PARTIAL
-                        else:
-                            financial_entry.status = FinancialEntry.PENDING
-
-                        financial_entry.save(update_fields=["status"])
+                        _sync_payment_status(
+                            financial_entry, paid_sum_in_entry_currency_new
+                        )
 
                         record_audit_event(
                             request,
@@ -3348,6 +4052,7 @@ def payment_create(request, entry_id):
                                 "status": financial_entry.status,
                             },
                         )
+                        _notify_payment(payment)
 
                     messages.success(request, "Pago registrado correctamente.")
                     return redirect("payment_list")
@@ -3369,9 +4074,52 @@ def payment_create(request, entry_id):
     )
 
 
+def _sync_payment_status(financial_entry, paid_total):
+    """Sincroniza cartera y factura al registrar pagos."""
+    if paid_total >= financial_entry.amount:
+        financial_entry.status = FinancialEntry.PAID
+    elif paid_total > 0:
+        financial_entry.status = FinancialEntry.PARTIAL
+    else:
+        financial_entry.status = FinancialEntry.PENDING
+    financial_entry.save(update_fields=["status"])
+
+    try:
+        invoice = financial_entry.invoice
+    except ObjectDoesNotExist:
+        return
+
+    expected_status = (
+        Invoice.PAID
+        if financial_entry.status == FinancialEntry.PAID
+        else Invoice.ISSUED
+    )
+    if invoice.status != expected_status:
+        invoice.status = expected_status
+        invoice.save(update_fields=["status"])
+
+
+def _notify_payment(payment):
+    entry = payment.financial_entry
+    try:
+        invoice = entry.invoice
+    except ObjectDoesNotExist:
+        invoice = None
+    link = f"/invoices/{invoice.pk}/" if invoice else "/payments/"
+    notify_users(
+        title="Pago registrado",
+        message=f"Se registró un pago de {payment.amount} {payment.currency} para {entry.concept}.",
+        link=link,
+        level=Notification.SUCCESS,
+        entity="payment",
+        entity_id=payment.pk,
+        dedupe_key=f"payment-created-{payment.pk}",
+    )
+
+
 @login_required
 @tenant_required
-@module_enabled_required("finances") # Or a new 'imports' module
+@module_enabled_required("import_batch")
 @tenant_group_required("Administrador de empresa", "Operador financiero")
 def generic_import_upload(request):
     business = Business.objects.first()
@@ -3382,59 +4130,27 @@ def generic_import_upload(request):
     if request.method == "POST":
         form = GenericImportUploadForm(request.POST, request.FILES)
         if form.is_valid():
-            uploaded_file = form.cleaned_data['file']
-            target_model = form.cleaned_data['target_model']
-            delimiter = form.cleaned_data['delimiter']
-            has_header = form.cleaned_data['has_header']
-
-            batch = ImportBatch.objects.create(
-                business=business,
-                created_by=request.user,
-                file_name=uploaded_file.name,
-                target_model=target_model,
-                status='uploaded',
-            )
-
             try:
-                # Determine file type and parse
-                if uploaded_file.name.endswith('.csv'):
-                    # Decode with utf-8, fallback to latin-1
-                    raw_data = uploaded_file.read()
-                    try:
-                        decoded_file = raw_data.decode('utf-8')
-                    except UnicodeDecodeError:
-                        decoded_file = raw_data.decode('latin-1')
-                    
-                    reader = csv.DictReader(io.StringIO(decoded_file), delimiter=delimiter)
-                    rows = list(reader)
-                elif uploaded_file.name.endswith(('.xls', '.xlsx')):
-                    import pandas as pd
-                    df = pd.read_excel(uploaded_file, header=0 if has_header else None)
-                    rows = df.to_dict('records')
-                else:
-                    raise ValueError("Tipo de archivo no soportado. Use CSV o Excel.")
-
-                # Store raw data for preview
-                records_to_create = []
-                for row_data in rows:
-                    records_to_create.append(ImportedRecord(
-                        batch=batch,
-                        row_data=row_data,
-                        status='pending'
-                    ))
-                ImportedRecord.objects.bulk_create(records_to_create)
-                batch.total_rows = len(records_to_create)
-                batch.save()
-
-                messages.success(request, f"Archivo '{uploaded_file.name}' subido y listo para previsualizar.")
-                return redirect('generic_import_preview', batch_id=batch.pk)
-
-            except Exception as e:
-                batch.status = 'failed'
-                batch.notes = str(e)
-                batch.save()
-                messages.error(request, f"Error al procesar el archivo: {str(e)}")
-                return redirect('generic_import_upload')
+                uploaded_file = form.cleaned_data["file"]
+                rows = read_import_rows(uploaded_file, form.cleaned_data["delimiter"])
+                with transaction.atomic():
+                    batch = ImportBatch.objects.create(
+                        business=business,
+                        created_by=request.user,
+                        file_name=uploaded_file.name[:255],
+                        target_model=form.cleaned_data["target_model"],
+                        status=ImportBatch.UPLOADED,
+                        total_rows=len(rows),
+                    )
+                    ImportedRecord.objects.bulk_create([
+                        ImportedRecord(batch=batch, row_data=row) for row in rows
+                    ])
+                    preview_batch(batch)
+                    record_audit_event(request, AuditEvent.CREATE, "import_batch", f"Lote cargado y validado: {batch.file_name}", batch.pk, {"rows": len(rows), "target": batch.target_model})
+                messages.success(request, f"Archivo validado: {len(rows)} filas analizadas.")
+                return redirect("generic_import_preview", batch_id=batch.pk)
+            except (ValidationError, ValueError) as exc:
+                messages.error(request, "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc))
     else:
         form = GenericImportUploadForm()
 
@@ -3445,15 +4161,15 @@ def generic_import_upload(request):
 
 @login_required
 @tenant_required
-@module_enabled_required("finances") # Or a new 'imports' module
+@module_enabled_required("import_batch")
 @tenant_group_required("Administrador de empresa", "Operador financiero")
 def generic_import_preview(request, batch_id):
-    batch = ImportBatch.objects.filter(pk=batch_id, created_by=request.user).first()
+    batch = ImportBatch.objects.filter(pk=batch_id, business=Business.objects.first()).first()
     if not batch:
         messages.error(request, "Lote de importación no encontrado o no autorizado.")
         return redirect('generic_import_upload')
 
-    if batch.status not in ['uploaded', 'previewed']:
+    if batch.status not in [ImportBatch.UPLOADED, ImportBatch.PREVIEWED]:
         messages.warning(request, f"Este lote ya fue {batch.status}. No se puede previsualizar de nuevo.")
         return redirect('generic_import_batch_detail', batch_id=batch.pk)
 
@@ -3462,44 +4178,11 @@ def generic_import_preview(request, batch_id):
         messages.warning(request, "No hay registros para previsualizar en este lote.")
         return redirect('generic_import_upload')
 
-    # Get headers from the first record's data
     headers = list(records.first().row_data.keys()) if records.first() else []
-
-    # Simple validation logic for preview (can be expanded)
-    for record in records:
-        errors = []
-        if batch.target_model == ImportBatch.FINANCIAL_ENTRY:
-            # Example: Check for 'amount' and 'entry_date'
-            try:
-                Decimal(str(record.row_data.get('amount', '0')).replace(',', '.'))
-            except InvalidOperation:
-                errors.append("Formato de 'amount' inválido")
-            if not record.row_data.get('entry_type') or record.row_data.get('entry_type') not in [c[0] for c in FinancialEntry.ENTRY_TYPE_CHOICES]:
-                errors.append("Tipo de entrada inválido")
-            try:
-                timezone.datetime.strptime(str(record.row_data.get('entry_date')), '%Y-%m-%d').date()
-            except (ValueError, TypeError):
-                errors.append("Formato de 'entry_date' inválido (esperado YYYY-MM-DD)")
-
-        elif batch.target_model == ImportBatch.THIRD_PARTY:
-            # Example: Check for 'name'
-            if not record.row_data.get('name'):
-                errors.append("Falta 'name'")
-        
-        if errors:
-            record.status = 'invalid'
-            record.validation_errors = errors
-        else:
-            record.status = 'valid'
-        record.save() # Save status and errors for preview
-
-    valid_records = records.filter(status='valid')
-    invalid_records = records.filter(status='invalid')
-
-    batch.processed_rows = valid_records.count()
-    batch.failed_rows = invalid_records.count()
-    batch.status = 'previewed'
-    batch.save()
+    if batch.status == ImportBatch.UPLOADED:
+        batch = preview_batch(batch)
+    valid_records = records.filter(status=ImportedRecord.VALID)
+    invalid_records = records.filter(status=ImportedRecord.INVALID)
 
     return render(request, 'tenant/generic_import_preview.html', {
         'batch': batch,
@@ -3511,96 +4194,52 @@ def generic_import_preview(request, batch_id):
 
 @login_required
 @tenant_required
-@module_enabled_required("finances") # Or a new 'imports' module
+@module_enabled_required("import_batch")
 @tenant_group_required("Administrador de empresa", "Operador financiero")
 @require_POST
 def generic_import_confirm(request, batch_id):
-    batch = ImportBatch.objects.filter(pk=batch_id, created_by=request.user).first()
+    batch = ImportBatch.objects.filter(pk=batch_id, business=Business.objects.first()).first()
     if not batch:
         messages.error(request, "Lote de importación no encontrado o no autorizado.")
         return redirect('generic_import_upload')
 
-    if batch.status == 'confirmed':
-        messages.warning(request, "Este lote ya fue confirmado.")
-        return redirect('generic_import_batch_detail', batch_id=batch.pk)
+    try:
+        batch = confirm_batch(batch)
+        record_audit_event(request, AuditEvent.CREATE, "import_batch_confirm", f"Importación confirmada: {batch.file_name}", batch.pk, {"processed": batch.processed_rows})
+        messages.success(request, f"Importación atómica completada: {batch.processed_rows} registros creados.")
+    except ValidationError as exc:
+        messages.error(request, "; ".join(exc.messages))
+    return redirect("generic_import_batch_detail", batch_id=batch.pk)
 
-    records = batch.records.filter(status='valid') # Only process valid records
-
-    processed_count = 0
-    failed_count = 0
-    
-    with transaction.atomic():
-        for record in records:
-            try:
-                if batch.target_model == ImportBatch.FINANCIAL_ENTRY:
-                    fe_data = {
-                        'business': batch.business,
-                        'created_by': batch.created_by,
-                        'entry_type': record.row_data.get('entry_type', FinancialEntry.EXPENSE),
-                        'status': record.row_data.get('status', FinancialEntry.PENDING),
-                        'concept': record.row_data.get('concept', 'Importado'),
-                        'amount': Decimal(str(record.row_data.get('amount')).replace(',', '.')),
-                        'currency': record.row_data.get('currency', 'COP'),
-                        'entry_date': timezone.datetime.strptime(str(record.row_data.get('entry_date')), '%Y-%m-%d').date(),
-                        'due_date': timezone.datetime.strptime(str(record.row_data.get('due_date')), '%Y-%m-%d').date() if record.row_data.get('due_date') else None,
-                        'notes': record.row_data.get('notes', ''),
-                        'personal': record.row_data.get('personal', False),
-                    }
-                    if record.row_data.get('category'):
-                        fe_data['category'] = FinancialCategory.objects.filter(name=record.row_data['category'], business=batch.business).first()
-                    if record.row_data.get('project'):
-                        fe_data['project'] = Project.objects.filter(name=record.row_data['project'], business=batch.business).first()
-                    if record.row_data.get('third_party'):
-                        fe_data['third_party'] = ThirdParty.objects.filter(name=record.row_data['third_party']).first()
-
-                    obj = FinancialEntry.objects.create(**fe_data)
-
-                elif batch.target_model == ImportBatch.THIRD_PARTY:
-                    tp_data = {
-                        'name': record.row_data.get('name'),
-                        'identification': record.row_data.get('identification', ''),
-                        'email': record.row_data.get('email', ''),
-                        'phone': record.row_data.get('phone', ''),
-                        'address': record.row_data.get('address', ''),
-                        'third_party_type': record.row_data.get('third_party_type', ThirdParty.CUSTOMER),
-                        'is_active': record.row_data.get('is_active', True),
-                    }
-                    obj = ThirdParty.objects.create(**tp_data)
-                
-                record.status = 'processed'
-                record.processed_object_id = str(obj.pk)
-                record.processed_object_model = batch.target_model
-                record.save()
-                processed_count += 1
-
-            except Exception as e:
-                record.status = 'failed'
-                record.validation_errors = record.validation_errors + [f"Error al procesar: {str(e)}"]
-                record.save()
-                failed_count += 1
-        
-        batch.status = 'confirmed'
-        batch.processed_rows = processed_count
-        batch.failed_rows = failed_count
-        batch.save()
-
-    if failed_count > 0:
-        messages.warning(request, f"Importación completada con {processed_count} registros procesados y {failed_count} fallidos. Revise los detalles del lote.")
-    else:
-        messages.success(request, f"Importación completada exitosamente. {processed_count} registros creados.")
-    
-    return redirect('generic_import_batch_detail', batch_id=batch.pk)
 
 @login_required
 @tenant_required
-@module_enabled_required("finances") # Or a new 'imports' module
+@module_enabled_required("import_batch")
+@tenant_group_required("Administrador de empresa")
+@require_POST
+def generic_import_rollback(request, batch_id):
+    batch = ImportBatch.objects.filter(pk=batch_id, business=Business.objects.first()).first()
+    if not batch:
+        messages.error(request, "Lote no encontrado.")
+        return redirect("generic_import_batch_list")
+    try:
+        rollback_batch(batch, request.user)
+        record_audit_event(request, AuditEvent.DELETE, "import_batch_rollback", f"Importación revertida: {batch.file_name}", batch.pk)
+        messages.success(request, "Rollback completado; se eliminaron los registros creados por el lote.")
+    except ValidationError as exc:
+        messages.error(request, "; ".join(exc.messages))
+    return redirect("generic_import_batch_detail", batch_id=batch.pk)
+
+@login_required
+@tenant_required
+@module_enabled_required("import_batch")
 def generic_import_batch_list(request):
     batches = ImportBatch.objects.filter(business=Business.objects.first()).order_by('-created_at')
     return render(request, 'tenant/generic_import_batch_list.html', {'batches': batches, 'page_title': 'Historial de Importaciones'})
 
 @login_required
 @tenant_required
-@module_enabled_required("finances") # Or a new 'imports' module
+@module_enabled_required("import_batch")
 def generic_import_batch_detail(request, batch_id):
     batch = ImportBatch.objects.filter(pk=batch_id, business=Business.objects.first()).first()
     if not batch:
@@ -3704,8 +4343,75 @@ def project_edit(request, project_id):
 
 @login_required
 @tenant_required
+@module_enabled_required("chart_accounts")
+def account_list(request):
+    accounts = Account.objects.select_related("parent").all()
+    query = request.GET.get("q", "").strip()
+    account_type = request.GET.get("type", "")
+    if query:
+        accounts = accounts.filter(Q(code__icontains=query) | Q(name__icontains=query))
+    if account_type:
+        accounts = accounts.filter(account_type=account_type)
+    return render(request, "tenant/account_list.html", {"accounts": accounts, "type_choices": Account.TYPE_CHOICES, "selected_type": account_type, "query": query})
+
+
+@login_required
+@tenant_required
+@module_enabled_required("chart_accounts")
+@tenant_group_required("Administrador de empresa")
+def account_create(request):
+    business = Business.objects.first()
+    if not business:
+        messages.error(request, "Primero debes crear la empresa del tenant.")
+        return redirect("dashboard")
+    form = AccountForm(request.POST or None, business=business)
+    if request.method == "POST" and form.is_valid():
+        account = form.save()
+        record_audit_event(request, AuditEvent.CREATE, "account", f"Cuenta contable creada: {account}", account.pk)
+        messages.success(request, "Cuenta contable creada correctamente.")
+        return redirect("account_list")
+    return render(request, "tenant/account_form.html", {"form": form, "page_title": "Nueva cuenta contable"})
+
+
+@login_required
+@tenant_required
+@module_enabled_required("chart_accounts")
+@tenant_group_required("Administrador de empresa")
+def account_edit(request, account_id):
+    account = Account.objects.filter(pk=account_id).first()
+    if not account:
+        messages.error(request, "Cuenta contable no encontrada.")
+        return redirect("account_list")
+    form = AccountForm(request.POST or None, instance=account, business=account.business)
+    if request.method == "POST" and form.is_valid():
+        account = form.save()
+        record_audit_event(request, AuditEvent.UPDATE, "account", f"Cuenta contable actualizada: {account}", account.pk)
+        messages.success(request, "Cuenta contable actualizada.")
+        return redirect("account_list")
+    return render(request, "tenant/account_form.html", {"form": form, "page_title": "Editar cuenta contable", "account": account})
+
+
+@login_required
+@tenant_required
+@module_enabled_required("chart_accounts")
+@tenant_group_required("Administrador de empresa")
+@require_POST
+def account_seed_puc(request):
+    business = Business.objects.first()
+    if not business:
+        messages.error(request, "Primero debes crear la empresa del tenant.")
+        return redirect("dashboard")
+    with transaction.atomic():
+        created, total = seed_puc_starter(business)
+        record_audit_event(request, AuditEvent.CREATE, "account", f"PUC inicial cargado: {created} cuentas nuevas", metadata={"created": created, "total": total})
+    messages.success(request, f"Plan inicial actualizado: {created} cuentas nuevas de {total} definidas.")
+    return redirect("account_list")
+
+
+@login_required
+@tenant_required
 def financial_category_list(request):
-    categories = FinancialCategory.objects.all()
+    categories = FinancialCategory.objects.select_related("account").all()
     return render(
         request, "tenant/financial_category_list.html", {"categories": categories}
     )
@@ -4129,10 +4835,11 @@ def quote_pdf(request, quote_id):
         ["SUBTOTAL", f"${quote.subtotal:.2f} {quote.currency}"],
     ]
     for rule in quote.tax_rules.all():
+        rule_amount = (quote.subtotal * rule.percentage) / Decimal("100")
         if rule.rule_type == TaxRule.IVA:
-            totals_data.append([f"{rule.name} ({rule.percentage}%)", f"${quote.tax_amount:.2f}"])
+            totals_data.append([f"{rule.name} ({rule.percentage}%)", f"${rule_amount:.2f}"])
         elif rule.rule_type in [TaxRule.RETENCION_FUENTE, TaxRule.RETENCION_ICA]:
-            totals_data.append([f"{rule.name} ({rule.percentage}%)", f"-${quote.retention_amount:.2f}"])
+            totals_data.append([f"{rule.name} ({rule.percentage}%)", f"-${rule_amount:.2f}"])
     totals_data.append(["TOTAL", f"${quote.total:.2f} {quote.currency}"])
 
     totals_table = Table(totals_data, colWidths=[3.5 * inch, 2.5 * inch])

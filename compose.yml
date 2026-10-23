@@ -27,20 +27,6 @@ services:
       - -c
       - |
         python manage.py migrate_schemas --noinput &&
-        python manage.py shell -c "
-        from django.contrib.auth import get_user_model;
-        User = get_user_model();
-        username='KeinerDev';
-        email='keinerdev13@gmail.com';
-        password='KeinerCetiia*!2';
-        u, created = User.objects.get_or_create(username=username, defaults={'email': email});
-        if created:
-            u.set_password(password);
-            u.is_staff = True;
-            u.is_superuser = True;
-            u.save();
-            print('Superuser creado');
-        " &&
         python manage.py ensure_dev_tenants &&
         python manage.py create_demo_tenant --type individual --schema demo --name "Demo Persona Natural" --domain demo.127.0.0.1.nip.io &&
         python manage.py runserver 0.0.0.0:5000

@@ -1,11 +1,30 @@
-from django.urls import path
+from django.urls import include, path
+from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from . import views, api
+from .health import health_check
+
+api_v1_router = DefaultRouter()
+api_v1_router.register("financial-entries", api.FinancialEntryViewSet, basename="v1-financial-entry")
+api_v1_router.register("third-parties", api.ThirdPartyViewSet, basename="v1-third-party")
+api_v1_router.register("webhooks", api.WebhookEndpointViewSet, basename="v1-webhook")
+api_v1_router.register("webhook-deliveries", api.WebhookDeliveryViewSet, basename="v1-webhook-delivery")
 
 urlpatterns = [
+    path("health/", health_check, name="health_check"),
     path("", views.home, name="home"),
     path("platform/", views.platform_dashboard, name="platform_dashboard"),
     path("platform/tenants/", views.platform_tenant_list, name="platform_tenant_list"),
+    path(
+        "platform/tenants/<int:tenant_id>/",
+        views.platform_tenant_detail,
+        name="platform_tenant_detail",
+    ),
+    path(
+        "platform/tenants/<int:tenant_id>/toggle-active/",
+        views.platform_tenant_toggle_active,
+        name="platform_tenant_toggle_active",
+    ),
     path(
         "platform/tenants/create/",
         views.platform_tenant_create,
@@ -66,9 +85,17 @@ urlpatterns = [
     path("budgets/create/", views.budget_create, name="budget_create"),
     path("budgets/<int:budget_id>/", views.budget_detail, name="budget_detail"),
     path("budgets/<int:budget_id>/edit/", views.budget_edit, name="budget_edit"),
+    path("forecast/", views.forecast_dashboard, name="forecast_dashboard"),
+    path("documents/", views.document_list, name="document_list"),
+    path("documents/create/", views.document_create, name="document_create"),
+    path("documents/<int:document_id>/", views.document_detail, name="document_detail"),
+    path("documents/<int:document_id>/versions/", views.document_add_version, name="document_add_version"),
+    path("documents/<int:document_id>/versions/<int:version_id>/download/", views.document_download, name="document_download"),
+    path("documents/<int:document_id>/archive/", views.document_archive, name="document_archive"),
     path("import/upload/", views.generic_import_upload, name="generic_import_upload"),
     path("import/preview/<int:batch_id>/", views.generic_import_preview, name="generic_import_preview"),
     path("import/confirm/<int:batch_id>/", views.generic_import_confirm, name="generic_import_confirm"),
+    path("import/rollback/<int:batch_id>/", views.generic_import_rollback, name="generic_import_rollback"),
     path("import/batches/", views.generic_import_batch_list, name="generic_import_batch_list"),
     path("import/batches/<int:batch_id>/", views.generic_import_batch_detail, name="generic_import_batch_detail"),
     path("tax-rules/", views.tax_rule_list, name="tax_rule_list"),
@@ -120,6 +147,16 @@ urlpatterns = [
     ),
     path("bank/statements/", views.bank_statement_list, name="bank_statement_list"),
     path("bank/reconciliations/", views.reconciliation_list, name="reconciliation_list"),
+    path(
+        "bank/transactions/<int:transaction_id>/manual-match/",
+        __import__("businessmanagement.services.banking", fromlist=["reconciliation_manual"]).reconciliation_manual,
+        name="reconciliation_manual",
+    ),
+    path(
+        "bank/statements/<int:statement_id>/bulk-confirm/",
+        __import__("businessmanagement.services.banking", fromlist=["reconciliation_bulk_confirm"]).reconciliation_bulk_confirm,
+        name="reconciliation_bulk_confirm",
+    ),
 
     path("projects/", views.project_list, name="project_list"),
     path("projects/create/", views.project_create, name="project_create"),
@@ -135,6 +172,10 @@ urlpatterns = [
         views.financial_category_edit,
         name="financial_category_edit",
     ),
+    path("accounting/accounts/", views.account_list, name="account_list"),
+    path("accounting/accounts/create/", views.account_create, name="account_create"),
+    path("accounting/accounts/<int:account_id>/edit/", views.account_edit, name="account_edit"),
+    path("accounting/accounts/seed-puc/", views.account_seed_puc, name="account_seed_puc"),
     path("currency-rates/", views.currency_rate_list, name="currency_rate_list"),
     path(
         "currency-rates/create/",
@@ -155,10 +196,18 @@ urlpatterns = [
     path("settings/modules/", views.module_settings, name="module_settings"),
     
     path("audit/", views.audit_event_list, name="audit_event_list"),
+    path("notifications/", views.notification_list, name="notification_list"),
+    path("notifications/read-all/", views.notification_read_all, name="notification_read_all"),
+    path("notifications/<int:notification_id>/open/", views.notification_open, name="notification_open"),
+    path("approvals/", views.approval_list, name="approval_list"),
+    path("approvals/<int:approval_id>/", views.approval_detail, name="approval_detail"),
+    path("approvals/<int:approval_id>/decide/", views.approval_decide, name="approval_decide"),
+    path("approvals/request/<str:entity_type>/<int:entity_id>/", views.approval_request_create, name="approval_request_create"),
     # Cotizaciones (Quotes)
     path("quotes/", views.quote_list, name="quote_list"),
     path("quotes/create/", views.quote_create, name="quote_create"),
     path("quotes/<int:quote_id>/", views.quote_detail, name="quote_detail"),
+    path("quotes/<int:quote_id>/edit/", views.quote_edit, name="quote_edit"),
     path(
         "quotes/<int:quote_id>/accept/",
         views.quote_accept,
@@ -177,7 +226,8 @@ urlpatterns = [
     path("invoices/<int:invoice_id>/", views.invoice_detail, name="invoice_detail"),
     path("invoices/<int:invoice_id>/edit/", views.invoice_edit, name="invoice_edit"),
     path("invoices/<int:invoice_id>/pdf/", views.invoice_pdf, name="invoice_pdf"),
-    # Removed invoice_delete in favor of invoice_cancel for data integrity
+    path("invoices/<int:invoice_id>/issue/", views.invoice_issue, name="invoice_issue"),
+    path("invoices/<int:invoice_id>/cancel/", views.invoice_cancel, name="invoice_cancel"),
 
     # Simple JSON API endpoints (read-only)
     # Notas de Crédito
@@ -203,6 +253,7 @@ urlpatterns = [
     path("debit-notes/<int:debit_note_id>/cancel/", views.debit_note_cancel, name="debit_note_cancel"),
 
     # API Endpoints
+    path("api/v1/", include(api_v1_router.urls)),
     path(
         "api/financial-entries/",
         api.financial_entries_api,

@@ -11,12 +11,29 @@ class Tenant(TenantMixin):
         (TYPE_INDIVIDUAL, "Persona Natural"),
     )
 
+    SERVICE_TRIAL = "trial"
+    SERVICE_ACTIVE = "active"
+    SERVICE_PAST_DUE = "past_due"
+    SERVICE_SUSPENDED = "suspended"
+    SERVICE_STATUS_CHOICES = (
+        (SERVICE_TRIAL, "Prueba"),
+        (SERVICE_ACTIVE, "Activo"),
+        (SERVICE_PAST_DUE, "Pago pendiente"),
+        (SERVICE_SUSPENDED, "Suspendido"),
+    )
+
     name = models.CharField(max_length=100)
     tenant_type = models.CharField(
         max_length=20, choices=TYPE_CHOICES, default=TYPE_BUSINESS
     )
     is_active = models.BooleanField(default=True)
     created_on = models.DateField(auto_now_add=True)
+    service_plan = models.CharField(max_length=80, blank=True)
+    service_status = models.CharField(
+        max_length=20, choices=SERVICE_STATUS_CHOICES, default=SERVICE_ACTIVE
+    )
+    renewal_date = models.DateField(null=True, blank=True)
+    platform_notes = models.TextField(blank=True)
     auto_create_schema = True  # crea el schema en DB automáticamente
     # Módulos habilitados para el tenant (almacenados como lista JSON)
     # Ejemplo: ["finances", "projects", "invoices", "employees", "third_parties"]

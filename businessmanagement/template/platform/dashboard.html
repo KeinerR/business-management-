@@ -5,25 +5,33 @@
 {% block platform_content %}
 <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-4">
 	<div>
-		<div class="platform-kicker">Control global</div>
-		<h2 class="h2 mb-1">Dashboard de plataforma</h2>
-		<p class="text-secondary mb-0">Vista del superadmin para operar tenants, dominios y aprovisionamiento de empresas.</p>
+		<div class="platform-kicker">Panel de clientes</div>
+		<h2 class="h2 mb-1">Operación de la plataforma</h2>
+		<p class="text-secondary mb-0">Supervisa cuentas, estado del servicio y renovaciones desde un solo lugar.</p>
 	</div>
-	<a class="btn btn-sm-brand" href="{% url 'platform_tenant_create' %}">Crear tenant</a>
+	<div class="d-flex gap-2 flex-wrap">
+		<a class="btn btn-outline-secondary" href="{% url 'platform_tenant_list' %}">Gestionar clientes</a>
+		<a class="btn btn-sm-brand" href="{% url 'platform_tenant_create' %}">Crear cliente</a>
+	</div>
 </div>
 
 <div class="metric-grid mb-4">
 	<div class="platform-card">
-		<div class="text-secondary small">Tenants empresariales</div>
+		<div class="text-secondary small">Clientes registrados</div>
 		<div class="metric-value">{{ tenant_count }}</div>
 	</div>
 	<div class="platform-card">
-		<div class="text-secondary small">Dominios de tenants</div>
-		<div class="metric-value">{{ domain_count }}</div>
+		<div class="text-secondary small">Servicios activos</div>
+		<div class="metric-value">{{ active_tenant_count }}</div>
 	</div>
 	<div class="platform-card">
-		<div class="text-secondary small">Dominios public</div>
-		<div class="metric-value">{{ public_domain_count }}</div>
+		<div class="text-secondary small">Requieren seguimiento</div>
+		<div class="metric-value">{{ attention_tenant_count }}</div>
+		<div class="small text-secondary">Renovación próxima/vencida, pago pendiente o suspendidos</div>
+	</div>
+	<div class="platform-card">
+		<div class="text-secondary small">Accesos suspendidos</div>
+		<div class="metric-value">{{ inactive_tenant_count }}</div>
 	</div>
 </div>
 
@@ -31,35 +39,35 @@
 	<div class="col-lg-8">
 		<div class="platform-card h-100">
 			<div class="d-flex justify-content-between align-items-center gap-3 flex-wrap mb-3">
-				<h3 class="h5 mb-0">Estado reciente de tenants</h3>
-				<a href="{% url 'platform_tenant_list' %}" class="btn btn-outline-secondary btn-sm">Ver tenants</a>
+				<h3 class="h5 mb-0">Cuentas recientes</h3>
+				<a href="{% url 'platform_tenant_list' %}" class="btn btn-outline-secondary btn-sm">Ver todos</a>
 			</div>
 			<div class="table-responsive">
 				<table class="table align-middle mb-0">
 					<thead>
 						<tr>
-							<th>Tenant</th>
-							<th>Estado</th>
-							<th>Empleados</th>
-							<th>Movimientos</th>
-							<th>Ultima actividad</th>
+							<th>Cliente</th>
+							<th>Plan / estado</th>
+							<th>Renovación</th>
+							<th>Equipo</th>
+							<th>Actividad</th>
 						</tr>
 					</thead>
 					<tbody>
 						{% for snapshot in tenant_snapshots %}
 							<tr>
 								<td>
-									<div class="fw-semibold">{{ snapshot.tenant.name }}</div>
-									<code>{{ snapshot.tenant.schema_name }}</code>
+									<a class="fw-semibold" href="{% url 'platform_tenant_detail' snapshot.tenant.pk %}">{{ snapshot.tenant.name }}</a>
+									<div class="small text-secondary">{% if snapshot.business %}{{ snapshot.business.business_email }}{% else %}{{ snapshot.tenant.schema_name }}{% endif %}</div>
 								</td>
-								<td><span class="badge text-bg-light border">{{ snapshot.status }}</span></td>
-								<td>{{ snapshot.employee_count|default:"-" }}</td>
-								<td>{{ snapshot.entry_count|default:"-" }}</td>
-								<td>{% if snapshot.latest_activity %}{{ snapshot.latest_activity.created_at }}{% else %}-{% endif %}</td>
+								<td><span class="badge text-bg-light border">{{ snapshot.tenant.get_service_status_display }}</span><div class="small text-secondary">{{ snapshot.tenant.service_plan|default:"Plan sin definir" }}</div></td>
+								<td>{{ snapshot.tenant.renewal_date|default:"Sin fecha" }}</td>
+								<td>{% if snapshot.schema_ready %}{{ snapshot.employee_count }}{% else %}<span class="text-warning">No disponible</span>{% endif %}</td>
+								<td>{% if snapshot.latest_activity %}{{ snapshot.latest_activity.created_at|date:"d/m/Y" }}{% else %}Sin actividad{% endif %}</td>
 							</tr>
 						{% empty %}
 							<tr>
-								<td colspan="5" class="text-secondary">Aun no hay tenants registrados.</td>
+								<td colspan="5" class="text-secondary">Aún no hay clientes registrados.</td>
 							</tr>
 						{% endfor %}
 					</tbody>
@@ -69,13 +77,11 @@
 	</div>
 	<div class="col-lg-4">
 		<div class="platform-card h-100">
-			<h3 class="h5">Responsabilidad del superadmin</h3>
-			<p class="text-secondary">Desde aqui se crean empresas tenant, se asigna su dominio local o real y se entrega el usuario administrador inicial.</p>
-			<ul class="text-secondary mb-0">
-				<li>Gestiona tenants y dominios.</li>
-				<li>No opera empleados de cada empresa.</li>
-				<li>Usa el admin tecnico solo como respaldo avanzado.</li>
-			</ul>
+			<h3 class="h5">Seguimiento de servicio</h3>
+			<p class="text-secondary">Revisa información de contacto, actividad de uso y datos comerciales del cliente desde su ficha.</p>
+			<a class="btn btn-outline-primary btn-sm" href="{% url 'platform_tenant_list' %}?renewal=soon">Ver renovaciones próximas</a>
+			<hr>
+			<div class="small text-secondary">Dominios de clientes: {{ domain_count }} · dominios públicos: {{ public_domain_count }}</div>
 		</div>
 	</div>
 </div>

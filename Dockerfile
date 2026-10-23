@@ -1,19 +1,25 @@
 FROM python:3.13-slim-trixie
 
 WORKDIR /app
-# Instalar dependencias del sistema necesarias para la compilación de paquetes Python
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    python3-dev \
-    libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
 COPY requirements.txt .
 
-RUN pip install --no-cache-dir -r requirements.txt
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    && pip install --no-cache-dir -r requirements.txt \
+    && apt-get purge -y --auto-remove build-essential libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-COPY . .
+RUN groupadd --system app && useradd --system --gid app --home-dir /app app \
+    && mkdir -p /app/media /app/staticfiles /var/lib/celery \
+    && chown -R app:app /app /var/lib/celery
 
-EXPOSE 5000
+COPY --chown=app:app . .
 
-CMD ["python", "manage.py", "runserver", "0.0.0.0:5000"]
+USER app
+EXPOSE 8000
+
+CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3", "--access-logfile", "-", "--error-logfile", "-"]

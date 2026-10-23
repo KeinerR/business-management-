@@ -64,6 +64,33 @@
     </div>
 
     <div class="platform-card">
+      <h2 class="h5 mb-1">Plan y seguimiento comercial</h2>
+      <p class="text-secondary small">Datos internos de la plataforma. No son visibles para los usuarios del tenant.</p>
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label" for="{{ form.service_plan.id_for_label }}">Plan / producto</label>
+          {{ form.service_plan }}
+          {{ form.service_plan.errors }}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label" for="{{ form.service_status.id_for_label }}">Estado del servicio</label>
+          {{ form.service_status }}
+          {{ form.service_status.errors }}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label" for="{{ form.renewal_date.id_for_label }}">Fecha de renovación</label>
+          {{ form.renewal_date }}
+          {{ form.renewal_date.errors }}
+        </div>
+        <div class="col-12">
+          <label class="form-label" for="{{ form.platform_notes.id_for_label }}">Notas internas</label>
+          {{ form.platform_notes }}
+          {{ form.platform_notes.errors }}
+        </div>
+      </div>
+    </div>
+
+    <div class="platform-card">
       <h2 class="h5 mb-3">Configuración de Módulos</h2>
       <p class="text-muted small">Selecciona los módulos que estarán disponibles para este tenant.</p>
 
