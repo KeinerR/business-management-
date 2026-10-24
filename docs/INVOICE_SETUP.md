@@ -17,7 +17,7 @@ El módulo de Facturas permite crear, gestionar y exportar facturas en PDF. Incl
 
 | Estado | Descripción | Acciones Permitidas |
 |--------|-------------|-------------------|
-| **draft** | Borrador | Editar, Eliminar, Ver PDF |
+| **draft** | Borrador | Editar, Emitir, Anular, Ver PDF |
 | **issued** | Emitida | Ver, PDF |
 | **paid** | Pagada | Ver, PDF |
 | **overdue** | Vencida | Ver, PDF |
@@ -27,7 +27,7 @@ El módulo de Facturas permite crear, gestionar y exportar facturas en PDF. Incl
 
 - **Crear/Editar**: Administrador de empresa, Operador financiero
 - **Ver**: Todos los usuarios autenticados
-- **Eliminar**: Administrador de empresa, Operador financiero (solo borradores)
+- **Eliminar**: no permitido; utilizar el flujo de anulación.
 - **Exportar PDF**: Todos los usuarios autenticados
 
 ## 📊 URLs del Módulo
@@ -38,7 +38,8 @@ El módulo de Facturas permite crear, gestionar y exportar facturas en PDF. Incl
 /invoices/<id>/                    # Ver detalle
 /invoices/<id>/edit/               # Editar (solo borrador)
 /invoices/<id>/pdf/                # Descargar PDF
-/invoices/<id>/delete/             # Eliminar (solo borrador)
+/invoices/<id>/issue/              # Emitir y crear cuenta por cobrar
+/invoices/<id>/cancel/             # Anular según restricciones del documento
 ```
 
 ## 🗄️ Modelos de Base de Datos
@@ -53,7 +54,8 @@ El módulo de Facturas permite crear, gestionar y exportar facturas en PDF. Incl
 - issue_date: DateField
 - due_date: DateField (nullable)
 - subtotal: DecimalField
-- tax_percentage: DecimalField (default 0%)
+- tax_rules: ManyToManyField(TaxRule), reglas tributarias del tenant
+- retention_amount: DecimalField (calculado)
 - tax_amount: DecimalField (calculado)
 - total: DecimalField (calculado)
 - currency: CharField (COP, USD, EUR, etc.)
@@ -110,8 +112,8 @@ pip install reportlab==4.0.9
      - Totales con IVA
 
 4. **Cambiar Estado**
-   - Cambiar estado en edición
-   - Al cambiar a "issued" se puede generar movimiento financiero
+   - Emitir desde la acción dedicada de la factura.
+   - La emisión crea una cuenta por cobrar una sola vez; los pagos actualizan los estados.
 
 ## 🎨 Diseño de PDF
 
@@ -135,7 +137,7 @@ Todas las operaciones se registran en `AuditEvent`:
 
 - Las facturas solo pueden ser editadas en estado "draft"
 - El número de factura debe ser único por empresa
-- El cálculo de IVA se realiza automáticamente
+- El cálculo de impuestos y retenciones se realiza con las reglas seleccionadas
 - Los PDFs se generan bajo demanda sin guardar en servidor
 
 ## 🔐 Seguridad
@@ -178,5 +180,5 @@ docker compose up -d --build
 
 ---
 
-**Última actualización**: Junio 4, 2024
-**Versión**: 1.0
+**Última revisión**: 24 de octubre de 2026
+**Referencia vigente**: ESTADO_IMPLEMENTACION.md

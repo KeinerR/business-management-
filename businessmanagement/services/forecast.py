@@ -2,8 +2,9 @@ from collections import defaultdict
 from decimal import Decimal
 
 from django.db.models import Sum
+from .currency import convert_amount
 
-from tenantdata.models import FinancialEntry, Payment
+from tenantdata.models import FinancialEntry
 
 
 def budget_performance(budget):
@@ -44,18 +45,26 @@ def cashflow_forecast(business, start_date, end_date):
         due_date__range=(start_date, end_date),
     ).prefetch_related("payments")
     buckets = defaultdict(lambda: {"incoming": Decimal("0"), "outgoing": Decimal("0")})
+    warnings = defaultdict(list)
     for entry in entries:
-        paid_same_currency = sum(
-            (payment.amount for payment in entry.payments.all() if payment.currency == entry.currency),
-            Decimal("0"),
-        )
-        remaining = max(entry.amount - paid_same_currency, Decimal("0"))
+        try:
+            paid = sum(
+                (convert_amount(payment.amount, payment.currency, entry.currency, payment.payment_date)
+                 for payment in entry.payments.all()), Decimal("0"),
+            )
+        except ValueError as exc:
+            warnings[(entry.due_date.strftime("%Y-%m"), entry.currency)].append(
+                f"Movimiento #{entry.pk}: {exc} Saldo excluido del cálculo."
+            )
+            continue
+        remaining = max(entry.amount - paid, Decimal("0"))
         key = (entry.due_date.strftime("%Y-%m"), entry.currency)
         if entry.entry_type == FinancialEntry.ACCOUNT_RECEIVABLE:
             buckets[key]["incoming"] += remaining
         else:
             buckets[key]["outgoing"] += remaining
     rows = []
-    for (month, currency), values in sorted(buckets.items()):
-        rows.append({"month": month, "currency": currency, "incoming": values["incoming"], "outgoing": values["outgoing"], "net": values["incoming"] - values["outgoing"]})
+    for month, currency in sorted(buckets.keys() | warnings.keys()):
+        values = buckets[(month, currency)]
+        rows.append({"month": month, "currency": currency, "incoming": values["incoming"], "outgoing": values["outgoing"], "net": values["incoming"] - values["outgoing"], "warnings": warnings[(month, currency)]})
     return rows

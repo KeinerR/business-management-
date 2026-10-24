@@ -141,15 +141,17 @@
 {% block content %}
 <div class="workspace-layout">
   <aside class="workspace-sidebar">
-    <div class="sidebar-kicker">Empresa tenant</div>
+    <div class="sidebar-kicker">Tu espacio de trabajo</div>
     <h1 class="h4 mb-1">
       {% block tenant_sidebar_title %}System Manager{% endblock %}
     </h1>
     <p class="text-secondary small mb-3">
-      {% block tenant_sidebar_subtitle %}Gestion interna de la empresa.
+      {% block tenant_sidebar_subtitle %}Finanzas y operación en un solo lugar.
       {% endblock %}
     </p>
 
+    <button id="tenant-menu-toggle" class="btn btn-outline-primary d-lg-none mb-2" type="button" data-bs-toggle="collapse" data-bs-target="#tenant-navigation" aria-controls="tenant-navigation" aria-expanded="false">Menú de trabajo</button>
+    <nav id="tenant-navigation" class="collapse d-lg-block" aria-label="Módulos de la empresa">
     <a class="sidebar-link" href="{% url 'dashboard' %}" {% if request.resolver_match.url_name == "dashboard" %}aria-current="page"{% endif %}>
       <span>Resumen</span><small>Inicio</small>
     </a>
@@ -240,8 +242,9 @@
     </details>
 
     <p class="text-secondary small mt-3 mb-0">
-      Este panel opera solo sobre el schema de la empresa actual.
+      La información de este espacio pertenece a tu organización.
     </p>
+    </nav>
   </aside> 
 
   <section class="workspace-main">

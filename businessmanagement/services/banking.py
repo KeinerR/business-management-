@@ -1,4 +1,5 @@
 from __future__ import annotations
+from businessmanagement.services.currency import convert_amount as _convert_amount
 
 from csv import writer as csv_writer
 from datetime import date, datetime, timedelta
@@ -68,22 +69,6 @@ def _parse_csv_date(value: str, *, statement_id: int | None = None, row_index: i
         # No usamos logger todavía; mantenemos trazabilidad.
         print(f"[bank-import] invalid date discarded statement_id={statement_id} row_index={row_index} value={value!r}")
     return None
-
-
-def _convert_amount(amount: Decimal, from_currency: str, to_currency: str, rate_date: date) -> Decimal:
-    if from_currency == to_currency:
-        return amount
-
-    from_rate = CurrencyRate.objects.filter(currency=from_currency, rate_date=rate_date).first()
-    to_rate = CurrencyRate.objects.filter(currency=to_currency, rate_date=rate_date).first()
-
-    if not from_rate or not to_rate:
-        raise ValueError(
-            "No existe tasa de cambio para la fecha y monedas seleccionadas."
-        )
-
-    amount_local = amount * from_rate.rate_to_local
-    return amount_local / to_rate.rate_to_local
 
 
 def _compute_payment_match_score(payment: Payment, fin_entry: FinancialEntry, bank_tx: BankTransaction) -> int:

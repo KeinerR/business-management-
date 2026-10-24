@@ -13,7 +13,7 @@ from django.contrib.auth.models import Group
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import IntegrityError, transaction
 from django.core.exceptions import ValidationError
-from django.test import override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.template.loader import get_template
 from openpyxl import Workbook
 from rest_framework.test import APIClient
@@ -47,6 +47,9 @@ from businessmanagement.services.document_management import add_document_version
 from businessmanagement.services.imports import confirm_batch, preview_batch, read_import_rows, rollback_batch
 from tenantdata.models import (
     Business,
+    CurrencyRate,
+    DebitNote,
+    DebitNoteItem,
     BankAccount,
     BankStatement,
     BankTransaction,
@@ -726,7 +729,7 @@ class BusinessFlowTests(TenantTestCase):
 
         business_response = client.get("/dashboard/")
         self.assertEqual(business_response.status_code, 200)
-        self.assertContains(business_response, "Dashboard de empresa")
+        self.assertContains(business_response, "Tu empresa, en perspectiva")
         self.assertContains(business_response, "Ingresos y egresos del mes")
         self.assertContains(business_response, 'id="theme-toggle"')
         self.assertContains(business_response, 'class="skip-link"')
@@ -962,3 +965,191 @@ class BusinessFlowTests(TenantTestCase):
                 "payment.registered",
             ],
         )
+
+
+    def test_forecast_multicurrency_converts_each_payment_on_its_date(self):
+        entry = FinancialEntry.objects.create(business=self.business,
+            entry_type=FinancialEntry.ACCOUNT_RECEIVABLE, status=FinancialEntry.PARTIAL,
+            concept="Multimoneda", amount=1000000, currency="COP",
+            entry_date=date(2026, 10, 1), due_date=date(2026, 11, 1))
+        for day, rate in [(10, 4000), (11, 4200)]:
+            CurrencyRate.objects.create(currency="USD", rate_date=date(2026, 10, day), rate_to_local=rate)
+            Payment.objects.create(financial_entry=entry, payment_date=date(2026, 10, day), amount=100, currency="USD")
+        rows = cashflow_forecast(self.business, date(2026, 11, 1), date(2026, 11, 30))
+        self.assertEqual(rows[0]["incoming"], Decimal("180000"))
+        self.assertFalse(rows[0]["warnings"])
+        entry.entry_type = FinancialEntry.ACCOUNT_PAYABLE
+        entry.save(update_fields=["entry_type"])
+        self.assertEqual(cashflow_forecast(self.business, date(2026, 11, 1), date(2026, 11, 30))[0]["outgoing"], Decimal("180000"))
+
+    def test_currency_conversion_handles_cop_and_cross_rates(self):
+        from businessmanagement.services.currency import convert_amount
+        day = date(2026, 10, 1)
+        CurrencyRate.objects.create(currency="USD", rate_date=day, rate_to_local=4000)
+        CurrencyRate.objects.create(currency="EUR", rate_date=day, rate_to_local=5000)
+        self.assertEqual(convert_amount(Decimal(100), "EUR", "USD", day), Decimal(125))
+        self.assertEqual(convert_amount(Decimal(4000), "COP", "USD", day), Decimal(1))
+        self.assertEqual(convert_amount(Decimal(1), "USD", "COP", day), Decimal(4000))
+        for bad in [0, -1]:
+            CurrencyRate.objects.filter(currency="USD").update(rate_to_local=bad)
+            with self.assertRaises(ValueError): convert_amount(Decimal(1), "COP", "USD", day)
+        with self.assertRaises(ValueError): convert_amount(Decimal(1), "EUR", "COP", date(2026, 10, 2))
+
+    def test_forecast_warns_instead_of_inventing_a_balance_without_rates(self):
+        entry = FinancialEntry.objects.create(business=self.business,
+            entry_type=FinancialEntry.ACCOUNT_RECEIVABLE, status=FinancialEntry.PARTIAL,
+            concept="Sin tasa", amount=1000, currency="COP",
+            entry_date=date(2026, 10, 1), due_date=date(2026, 11, 1))
+        Payment.objects.create(financial_entry=entry, payment_date=date(2026, 10, 1), amount=1, currency="USD")
+        rows = cashflow_forecast(self.business, date(2026, 11, 1), date(2026, 11, 30))
+        self.assertEqual(rows[0]["incoming"], 0)
+        self.assertIn(str(entry.pk), rows[0]["warnings"][0])
+        html = get_template("tenant/partials/forecast_table.html").render({"forecast_rows": rows})
+        self.assertIn("Proyección incompleta", html)
+
+    def test_rate_sync_preserves_manual_rates_and_is_idempotent(self):
+        from businessmanagement.tasks import update_currency_rates
+        from businessmanagement.services.exchange_rates import SOURCE
+        day = date(2026, 10, 1)
+        CurrencyRate.objects.create(currency="USD", rate_date=day, rate_to_local=3900, source="manual")
+        with patch("businessmanagement.services.exchange_rates.fetch_reference_rates", return_value=(day, {"USD": Decimal(4000), "EUR": Decimal(5000)})) as fetch:
+            update_currency_rates()
+            update_currency_rates()
+            self.assertEqual(fetch.call_count, 2)
+        self.assertEqual(CurrencyRate.objects.get(currency="USD").rate_to_local, 3900)
+        self.assertEqual(CurrencyRate.objects.get(currency="EUR").source, SOURCE)
+        self.assertEqual(CurrencyRate.objects.count(), 2)
+        self.assertEqual(AuditEvent.objects.filter(entity="currency_rate").count(), 1)
+        self.assertFalse(CurrencyRate.objects.filter(currency="BINANCE").exists())
+
+    def test_rate_sync_provider_failure_writes_nothing(self):
+        import requests
+        from businessmanagement.tasks import update_currency_rates
+        with patch("businessmanagement.services.exchange_rates.fetch_reference_rates", side_effect=requests.Timeout):
+            with self.assertRaises(requests.Timeout): update_currency_rates()
+        self.assertFalse(CurrencyRate.objects.exists())
+        self.assertFalse(AuditEvent.objects.filter(entity="currency_rate").exists())
+
+    def test_editing_an_automatic_rate_makes_it_manual(self):
+        user = get_user_model().objects.create_superuser(username="rate-admin", email="admin@example.com", password=None)
+        self.tenant.enabled_modules.append("currency_rates")
+        self.tenant.save(update_fields=["enabled_modules"])
+        client = APIClient(HTTP_HOST=self.domain.domain)
+        client.force_login(user)
+        rate = CurrencyRate.objects.create(currency="USD", rate_date=date(2026, 10, 1), rate_to_local=4000, source="open.er-api.com")
+        response = client.post(f"/currency-rates/{rate.pk}/edit/", {
+            "currency": "USD", "rate_date": "2026-10-01", "rate_to_local": "4100", "source": "open.er-api.com"})
+        self.assertEqual(response.status_code, 302)
+        rate.refresh_from_db()
+        self.assertEqual(rate.source, "manual")
+        self.assertEqual(rate.rate_to_local, 4100)
+        self.tenant.enabled_modules.remove("currency_rates")
+        self.tenant.save(update_fields=["enabled_modules"])
+
+    def test_rate_sync_continues_when_another_tenant_fails(self):
+        from businessmanagement.tasks import update_currency_rates
+        tenants = [Mock(schema_name="missing_schema"), self.tenant]
+        with patch("businessmanagement.tasks.Tenant.objects.filter") as query, patch(
+            "businessmanagement.services.exchange_rates.fetch_reference_rates",
+            return_value=(date(2026, 10, 1), {"USD": Decimal(4000), "EUR": Decimal(5000)})), patch(
+            "businessmanagement.tasks.logger.exception"):
+            query.return_value.exclude.return_value = tenants
+            # Force the broken tenant to fail without falling back to public's search_path.
+            from django_tenants.utils import schema_context as real_context
+            from contextlib import contextmanager
+            @contextmanager
+            def context(schema):
+                if schema == "missing_schema": raise RuntimeError("tenant unavailable")
+                with real_context(schema): yield
+            with patch("businessmanagement.tasks.schema_context", context), self.assertRaises(RuntimeError):
+                update_currency_rates()
+        self.assertEqual(CurrencyRate.objects.count(), 2)
+        query.assert_called_once_with(is_active=True)
+
+    def test_debit_note_pdf_detail_and_access_controls(self):
+        self.client = APIClient(HTTP_HOST=self.domain.domain)
+        self.tenant.enabled_modules.append("debit_notes")
+        self.tenant.save(update_fields=["enabled_modules"])
+        user = get_user_model().objects.create_user(username="note-reader")
+        note = DebitNote.objects.create(business=self.business, issue_date=date(2026, 10, 1),
+            description="Ajuste <contable> & otros", subtotal=100, tax_amount=19, retention_amount=2, total=117)
+        DebitNoteItem.objects.create(debit_note=note, description="Servicio <A> & B " * 10,
+            quantity=1, unit_price=100, subtotal=100)
+        url = f"/debit-notes/{note.pk}/pdf/"
+        self.assertEqual(self.client.get(url).status_code, 302)
+        self.client.force_login(user)
+        self.assertContains(self.client.get("/debit-notes/"), url)
+        detail = self.client.get(f"/debit-notes/{note.pk}/")
+        self.assertContains(detail, url)
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        self.assertIn(note.debit_note_number, response["Content-Disposition"])
+        pdf = b"".join(response.streaming_content)
+        self.assertTrue(pdf.startswith(b"%PDF-"))
+        self.assertIn(b"/Type /Page", pdf)
+        self.assertTrue(AuditEvent.objects.filter(entity="debit_note", action=AuditEvent.ACCESS).exists())
+        self.assertEqual(self.client.get("/debit-notes/999999/pdf/").status_code, 404)
+        self.tenant.enabled_modules.remove("debit_notes")
+        self.tenant.save(update_fields=["enabled_modules"])
+        self.assertNotEqual(self.client.get(url).status_code, 200)
+
+
+class ProductionHealthTests(TestCase):
+    @override_settings(ALLOWED_HOSTS=["127.0.0.1"], SECURE_SSL_REDIRECT=True,
+                       SECURE_PROXY_SSL_HEADER=("HTTP_X_FORWARDED_PROTO", "https"))
+    def test_health_does_not_require_a_provisioned_tenant(self):
+        response = self.client.get("/health/", HTTP_HOST="127.0.0.1",
+                                   HTTP_X_FORWARDED_PROTO="https")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ok"})
+
+    @override_settings(ALLOWED_HOSTS=["127.0.0.1"], SECURE_SSL_REDIRECT=True)
+    def test_health_keeps_https_redirect(self):
+        response = self.client.get("/health/", HTTP_HOST="127.0.0.1")
+        self.assertEqual(response.status_code, 301)
+
+    @override_settings(ALLOWED_HOSTS=["127.0.0.1"])
+    def test_health_rejects_unknown_host(self):
+        self.assertEqual(self.client.get("/health/", HTTP_HOST="unknown.invalid").status_code, 400)
+
+    @override_settings(ALLOWED_HOSTS=["127.0.0.1"])
+    def test_health_reports_a_failed_database_query(self):
+        from django.db import OperationalError
+        with patch("businessmanagement.health.connection.cursor", side_effect=OperationalError("unavailable")):
+            response = self.client.get("/health/", HTTP_HOST="127.0.0.1")
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json(), {"status": "unavailable"})
+
+
+class ExchangeProviderTests(SimpleTestCase):
+    def payload(self):
+        from django.utils import timezone
+        return {"result": "success", "base_code": "USD", "time_last_update_unix": timezone.now().timestamp(),
+                "rates": {"COP": 4000, "EUR": .8}}
+
+    def test_feed_converts_usd_based_rates_to_cop(self):
+        from businessmanagement.services.exchange_rates import fetch_reference_rates
+        with patch("businessmanagement.services.exchange_rates.requests.get", return_value=Mock(status_code=200, json=Mock(return_value=self.payload()))) as request:
+            day, rates = fetch_reference_rates()
+        self.assertEqual(rates, {"USD": Decimal("4000.0000"), "EUR": Decimal("5000.0000")})
+        request.assert_called_once_with("https://open.er-api.com/v6/latest/USD", timeout=(5, 20), allow_redirects=False)
+
+    def test_feed_rejects_malformed_stale_future_and_nonpositive_values(self):
+        from businessmanagement.services.exchange_rates import fetch_reference_rates
+        payloads = [[], {}, {**self.payload(), "result": "error"}, {**self.payload(), "base_code": "EUR"},
+                    {**self.payload(), "time_last_update_unix": 0},
+                    {**self.payload(), "time_last_update_unix": self.payload()["time_last_update_unix"] + 86400}]
+        for value in [0, -1, "NaN", "Infinity", "1e99", None]:
+            payloads.append({**self.payload(), "rates": {"COP": value, "EUR": .8}})
+        for payload in payloads:
+            with self.subTest(payload=payload), patch("businessmanagement.services.exchange_rates.requests.get", return_value=Mock(status_code=200, json=Mock(return_value=payload))):
+                with self.assertRaises(ValueError): fetch_reference_rates()
+
+    def test_feed_rejects_redirect_and_network_failure(self):
+        import requests
+        from businessmanagement.services.exchange_rates import fetch_reference_rates
+        with patch("businessmanagement.services.exchange_rates.requests.get", return_value=Mock(status_code=302)):
+            with self.assertRaises(ValueError): fetch_reference_rates()
+        with patch("businessmanagement.services.exchange_rates.requests.get", side_effect=requests.Timeout):
+            with self.assertRaises(requests.Timeout): fetch_reference_rates()

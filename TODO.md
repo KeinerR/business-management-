@@ -1,86 +1,30 @@
-# TODO - Pagos / Reconciliación (Payment)
+# Pendientes vigentes
 
-## Auditoría / P0 (estado)
-- [x] B1: Gating + autenticación aplicada a vistas financieras (payment_list/cartera_dashboard/project_list)
-- [x] B5: invoice_edit borra items dentro de atomic()
-- [x] B4: payment_create GET/remaining envuelto para evitar 500 por conversión faltante
-- [x] B9: module_enabled_required aplicado a facturas/cotizaciones
-- [x] Hotfix: `celery_worker` ya inicia (NameError DebitNote)
-- [x] B2: eliminar segunda copia duplicada en `businessmanagement/views.py` (560 líneas)
-- [x] B3: asegurar `_parse_csv_date` sin descartes silenciosos y con logging (agregar conteo/report)
-- [x] B6: prefijo QUO- para Quote (tenantdata/models.py)
-- [x] B7: ajustar reconciliación para no romper por UniqueConstraint al re-procesar (update en vez de crear)
-- [ ] B8: ensure_dev_tenants/create_demo_tenant reparan enabled_modules correctamente (ver comandos)
+Referencia: `docs/ESTADO_IMPLEMENTACION.md`. El antiguo checklist de pagos/cotizaciones describía trabajo ya implementado y fue sustituido para evitar duplicaciones.
 
+## Prioridad actual: cierre de fase 5
 
-## Paso 1
+- [ ] Completar criterios de staging HTTPS de `docs/PRODUCTION_READINESS.md`.
+- [ ] Revisión visual completa de plataforma, persona natural y empresa.
+- [ ] Ejecutar y confirmar el nuevo pipeline en GitHub después de subir cambios.
 
+## Siguiente ciclo funcional
 
-- [x] Investigar repo: no existe módulo Payment/pagos/reconciliación.
-- [x] Confirmar estado actual: `FinancialEntry.status` ya tiene pending/partial/paid/cancelled.
-- [x] Confirmar relación: `Invoice.financial_entry` (OneToOne).
+- [x] Forecast: descontar pagos de otra moneda mediante conversión consistente.
+- [x] Implementar actualización automática de tasas con proveedor y política definidos.
+- [ ] Validar consulta real a `open.er-api.com` después de aplicar el permiso de red guardado en el borrador.
+- [x] PDF de notas débito.
+- [ ] Ampliar pruebas de aislamiento entre tenants, roles y concurrencia.
 
-## Paso 2 (preparación)
+## Deuda técnica
 
-- [x] Corregir `TemplateSyntaxError` en `businessmanagement/template/tenant/invoice_form.html`.
+- [ ] Completar las plantillas preexistentes ausentes para creación/edición de notas crédito/débito; listado/detalle de débito ya funcionan.
 
-## Paso 3 (implementación módulo Payment)
+- [ ] Separar `views.py` por dominio y consolidar lógica documental repetida.
+- [ ] Revisar uso y migración de modelos legacy públicos Business/Employee antes de eliminarlos.
+- [ ] Retirar archivos runtime versionados sin perder datos necesarios.
+- [ ] Revisar borrado ORM de usuarios en el esquema público: al limpiar un usuario temporal, Django intentó consultar relaciones de `tenantdata_employee`, inexistentes en public. La sesión temporal fue revocada y la cuenta desactivada; no se cambió el modelo en esta entrega.
 
-- [x] Agregar modelo `Payment` en `tenantdata/models.py` (FK a `FinancialEntry`, auditoría).
-- [x] Agregar migración de DB.
+## Fuera del alcance actual
 
-- [x] Agregar `PaymentForm` en `businessmanagement/forms.py`.
-- [x] Agregar vistas para pantalla directa de Pagos indexada por `FinancialEntry` (listado + crear).
-
-- [ ] Agregar lógica de conversión de moneda (usando `CurrencyRate`) para reconciliación.
-- [ ] Actualizar `FinancialEntry.status` tras crear pago.
-- [ ] Agregar rutas en `businessmanagement/urls.py`.
-- [ ] Crear templates:
-  - [ ] list/ index pagos por movimiento (FinancialEntry)
-  - [ ] formulario de pago
-- [ ] Registrar en `businessmanagement/admin.py`.
-
-## Paso 4 (verificación)
-
-- [ ] Ejecutar migraciones y correr checks/compilación.
-- [ ] Validar flujo: registrar pagos parciales y que el estado del `FinancialEntry` cambie correctamente.
-
-# TODO - Workflow comercial: Cotizaciones → Facturas → Pagos
-
-## Paso 5 (descubrimiento / diseño)
-
-- [x] Confirmar que `Invoice`/`InvoiceItem`/`Payment` existen.
-- [x] Definir la regla: al “convertir” una cotización aceptada se crea `Invoice` + `InvoiceItem`.
-- [x] Confirmar adicional (según tu respuesta): al convertir a Factura también se crea `FinancialEntry` como `ACCOUNT_RECEIVABLE` para que aparezca en `cartera_dashboard` y se puedan registrar pagos.
-
-## Paso 6 (modelos y migraciones)
-
-- [x] Agregar modelos `Quote`, `QuoteItem` en `tenantdata/models.py`.
-- [x] Implementar campos y lógica básica (status, totales, calculate_totals).
-- [x] Crear migración para Quote/QuoteItem.
-
-## Paso 7 (forms)
-
-- [ ] Agregar `QuoteForm` y UI de items (mismo patrón que `InvoiceForm`).
-- [ ] Agregar `QuoteItem` form si se usa (si no, manejar items por POST arrays).
-
-## Paso 8 (vistas + URLs)
-
-- [x] Crear `quote_list`, `quote_create`, `quote_detail`.
-- [x] Crear endpoint `quote_accept` (cambia status a accepted).
-- [x] Crear endpoint `quote_convert_to_invoice` (accepted → crea Invoice, InvoiceItems, FinancialEntry).
-- [x] Agregar rutas en `businessmanagement/urls.py`.
-
-## Paso 9 (templates)
-
-- [ ] Crear `quote_list.html`.
-- [ ] Crear `quote_form.html` (clonando `invoice_form.html`).
-- [ ] Crear `quote_detail.html` (incluye acciones Aceptar/Convertir según status).
-- [ ] Ajustar navegación si existe menú (opcional).
-
-## Paso 10 (verificación funcional)
-
-- [ ] Probar: cotización draft → aceptar → convertir → aparece Invoice en invoice_list.
-- [ ] Probar: aparece `FinancialEntry` con `ACCOUNT_RECEIVABLE` en `cartera_dashboard`.
-- [ ] Probar: registrar pago(s) y que `FinancialEntry.status` evoluciona pending/partial/paid correctamente.
-- [ ] Validar que no hay duplicados al convertir (con bloqueo por status/relación).
+OCR, notificaciones email/WhatsApp/SMS y contabilidad por partida doble.

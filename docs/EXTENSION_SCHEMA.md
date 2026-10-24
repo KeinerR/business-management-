@@ -1,5 +1,7 @@
 # Esquema de extensión para gestión por proyectos y gastos personales
 
+> Propuesta histórica: Project, FinancialCategory, vínculos financieros, tipos de tenant y presupuestos ya están implementados. No recrear estos modelos. Consultar ESTADO_IMPLEMENTACION.md para el alcance vigente; subproyectos y clasificación automática siguen siendo posibles extensiones.
+
 Este documento propone una evolución de la app `SystemManager` para que no solo gestione la empresa, sino también:
 
 - Gastos e ingresos por proyecto.

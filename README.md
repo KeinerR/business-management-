@@ -126,3 +126,11 @@ docker compose -f compose.yml logs -f celery_worker
 ```
 
 Las tareas programadas activas están definidas en `config/celery.py`.
+
+### Estado y preparación para producción
+
+Consulta [estado de implementación](docs/ESTADO_IMPLEMENTACION.md) y [criterios de cierre de fase 5](docs/PRODUCTION_READINESS.md). El backend productivo se limita a `127.0.0.1` por defecto; configura el proxy TLS antes de exponerlo. Bootstrap se sirve localmente. El pipeline en `.github/workflows/validate.yml` valida dependencias, migraciones, pruebas, estáticos e imagen.
+
+### Tasas, forecast y notas débito
+
+El forecast convierte pagos por fecha con COP como base y muestra avisos cuando faltan tasas. Celery sincroniza tasas de referencia USD/EUR cada día; permite salida HTTPS a `open.er-api.com` y usa `python manage.py update_currency_rates` para una ejecución manual. No sobrescribe tasas manuales ni automatiza Binance P2P. Las notas débito existentes permiten descargar PDF desde su listado/detalle. Consulta [operación y límites](docs/CURRENCY_AND_DEBIT_NOTES.md).

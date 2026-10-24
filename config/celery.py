@@ -20,10 +20,10 @@ app.conf.beat_schedule = {
     },
 }
 
-# NOTE: update_currency_rates task not implemented yet - disabled until implemented
-# app.conf.beat_schedule = {
-#     'update-currency-rates-daily': {
-#         'task': 'businessmanagement.tasks.update_currency_rates',
-#         'schedule': crontab(hour=3, minute=0),
-#     },
-# }
+from django.conf import settings
+
+if settings.CURRENCY_AUTO_UPDATE:
+    app.conf.beat_schedule["update-currency-rates-daily"] = {
+        "task": "businessmanagement.tasks.update_currency_rates",
+        "schedule": crontab(hour=3, minute=0),
+    }

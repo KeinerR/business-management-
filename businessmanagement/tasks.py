@@ -231,3 +231,42 @@ def mark_expired_quotes():
                         dedupe_key=f"quote-expired-{quote.pk}",
                     )
     return f"Cotizaciones vencidas actualizadas: {processed}."
+
+
+@shared_task
+def update_currency_rates():
+    """Fetch once, then atomically replicate to each active tenant, preserving manual rates."""
+    from businessmanagement.services.exchange_rates import fetch_reference_rates, SOURCE
+    from tenantdata.models import CurrencyRate
+
+    # Fetch and validate before modifying any schema; provider failures fail the task visibly.
+    rate_date, rates = fetch_reference_rates()
+    result = {"updated_tenants": 0, "failed_tenants": 0}
+    for tenant in Tenant.objects.filter(is_active=True).exclude(schema_name="public"):
+        try:
+            with schema_context(tenant.schema_name), transaction.atomic():
+                changed = 0
+                for currency, value in rates.items():
+                    record, created = CurrencyRate.objects.get_or_create(
+                        currency=currency, rate_date=rate_date,
+                        defaults={"rate_to_local": value, "source": SOURCE},
+                    )
+                    if created:
+                        changed += 1
+                    elif record.source == SOURCE and record.rate_to_local != value:
+                        record.rate_to_local = value
+                        record.save(update_fields=["rate_to_local"])
+                        changed += 1
+                if changed:
+                    AuditEvent.objects.create(
+                        action=AuditEvent.UPDATE, entity="currency_rate",
+                        summary="Tasas de referencia USD/EUR actualizadas automáticamente.",
+                        metadata={"date": rate_date.isoformat(), "source": SOURCE, "changed": changed},
+                    )
+            result["updated_tenants"] += 1
+        except Exception:
+            result["failed_tenants"] += 1
+            logger.exception("No se pudieron actualizar tasas del tenant %s", tenant.schema_name)
+    if result["failed_tenants"]:
+        raise RuntimeError(f"Actualización parcial de tasas: {result}")
+    return result

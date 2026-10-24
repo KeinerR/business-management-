@@ -80,8 +80,9 @@ TENANT_MODEL = "businessmanagement.Tenant"
 TENANT_DOMAIN_MODEL = "businessmanagement.Domain"
 
 MIDDLEWARE = [
-    "django_tenants.middleware.main.TenantMainMiddleware",  # new, must be first
     'django.middleware.security.SecurityMiddleware',
+    "businessmanagement.middleware.HealthCheckMiddleware",
+    "django_tenants.middleware.main.TenantMainMiddleware",
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -216,3 +217,6 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://redis:6379/0')
 CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://redis:6379/1')
 CELERY_TIMEZONE = TIME_ZONE
+
+# Public reference feed; no API key. Disable explicitly when automatic rates are unwanted.
+CURRENCY_AUTO_UPDATE = os.getenv("CURRENCY_AUTO_UPDATE", "True") == "True"

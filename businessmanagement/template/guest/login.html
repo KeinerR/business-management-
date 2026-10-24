@@ -10,7 +10,7 @@
 		min-height: calc(100vh - 113px);
 		display: grid;
 		align-items: center;
-		background: #f6f8f7;
+		background: var(--sm-panel);
 		padding: clamp(1rem, 4vw, 3rem) 0;
 	}
 
@@ -22,9 +22,9 @@
 	.login-shell {
 		display: grid;
 		grid-template-columns: minmax(0, .95fr) minmax(360px, .75fr);
-		border: 1px solid #cad9d6;
+		border: 1px solid var(--sm-line);
 		border-radius: 8px;
-		background: #fff;
+		background: var(--sm-surface);
 		box-shadow: var(--sm-shadow);
 		overflow: hidden;
 	}
@@ -34,7 +34,7 @@
 		flex-direction: column;
 		justify-content: space-between;
 		gap: 2rem;
-		background: #f8faf9;
+		background: var(--sm-panel);
 		border-right: 1px solid var(--sm-line);
 		padding: clamp(1.25rem, 4vw, 2rem);
 	}
@@ -70,7 +70,7 @@
 	.context-item {
 		border: 1px solid var(--sm-line);
 		border-radius: 8px;
-		background: #fff;
+		background: var(--sm-surface);
 		padding: .9rem;
 	}
 
@@ -166,7 +166,7 @@
 	.login-help-panel {
 		border: 1px solid var(--sm-line);
 		border-radius: 8px;
-		background: #f8faf9;
+		background: var(--sm-panel);
 		padding: .9rem;
 	}
 
@@ -180,6 +180,8 @@
 		color: var(--sm-muted);
 		font-size: .88rem;
 	}
+
+	:root[data-theme="dark"] .btn-login-submit { color: #121a18; }
 
 	@media (max-width: 991.98px) {
 		.login-shell {

@@ -1,3 +1,4 @@
+from businessmanagement.services.currency import convert_amount as _convert_amount
 from csv import writer as csv_writer
 from datetime import date, timedelta
 from io import BytesIO
@@ -1619,7 +1620,10 @@ def currency_rate_edit(request, rate_id):
 
     form = CurrencyRateForm(request.POST or None, instance=rate)
     if request.method == "POST" and form.is_valid():
-        rate = form.save()
+        rate = form.save(commit=False)
+        if rate.source == "open.er-api.com":
+            rate.source = "manual"
+        rate.save()
         record_audit_event(
             request,
             AuditEvent.UPDATE,
@@ -1683,7 +1687,10 @@ def currency_rate_list(request):
 def currency_rate_create(request):
     form = CurrencyRateForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
-        rate = form.save()
+        rate = form.save(commit=False)
+        if rate.source == "open.er-api.com":
+            rate.source = "manual"
+        rate.save()
         record_audit_event(
             request,
             AuditEvent.CREATE,
@@ -3278,29 +3285,6 @@ def debit_note_detail(request, debit_note_id):
         return redirect("debit_note_list")
 
     return render(request, "tenant/debit_note_detail.html", {"debit_note": debit_note})
-
-
-def _convert_amount(amount, from_currency, to_currency, rate_date):
-    if from_currency == to_currency:
-        return amount
-
-    # suponemos que rate_to_local representa el valor de 1 unidad de currency en moneda local (COP)
-    from_rate = CurrencyRate.objects.filter(
-        currency=from_currency, rate_date=rate_date
-    ).first()
-    to_rate = CurrencyRate.objects.filter(
-        currency=to_currency, rate_date=rate_date
-    ).first()
-
-    if not from_rate or not to_rate:
-        raise ValueError(
-            "No existe tasa de cambio para la fecha y monedas seleccionadas."
-        )
-
-    # amount_local = amount * from_rate.rate_to_local
-    amount_local = amount * from_rate.rate_to_local
-    # amount_in_to = amount_local / to_rate.rate_to_local
-    return amount_local / to_rate.rate_to_local
 
 
 def _aging_bucket(days_overdue):
@@ -5076,3 +5060,17 @@ def reconciliation_list(request):
             "page_title": "Conciliación Bancaria",
         },
     )
+
+
+@login_required
+@tenant_required
+@module_enabled_required("debit_notes")
+def debit_note_pdf(request, debit_note_id):
+    from .services.note_pdf import debit_note_pdf as render_pdf
+
+    note = DebitNote.objects.select_related("business", "third_party", "invoice").prefetch_related("items").filter(pk=debit_note_id).first()
+    if note is None:
+        raise Http404("Nota de débito no encontrada.")
+    document = render_pdf(note)
+    record_audit_event(request, AuditEvent.ACCESS, "debit_note", f"PDF de nota de débito: {note.debit_note_number}", entity_id=note.pk)
+    return FileResponse(document, as_attachment=True, filename=f"debit_note_{note.debit_note_number}.pdf", content_type="application/pdf")

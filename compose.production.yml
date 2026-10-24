@@ -52,7 +52,7 @@ services:
       - -c
       - python manage.py migrate_schemas --noinput && python manage.py collectstatic --noinput && exec gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers "$${WEB_CONCURRENCY:-3}" --access-logfile - --error-logfile -
     ports:
-      - "${WEB_PORT:-8000}:8000"
+      - "${WEB_BIND_ADDRESS:-127.0.0.1}:${WEB_PORT:-8000}:8000"
     volumes:
       - media_data:/app/media
     depends_on:

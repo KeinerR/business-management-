@@ -100,12 +100,15 @@
 {% block content %}
 <div class="platform-layout">
 	<aside class="platform-sidebar">
-		<div class="platform-kicker">Superadmin</div>
+		<div class="platform-kicker">Administración</div>
 		<h1 class="h4 mb-1">Plataforma</h1>
-		<p class="text-secondary small mb-3">Gestion global de tenants, dominios y empresas base.</p>
-		<a class="platform-link" href="{% url 'platform_dashboard' %}"><span>Resumen</span><small>Global</small></a>
-		<a class="platform-link" href="{% url 'platform_tenant_list' %}"><span>Clientes y tenants</span><small>Seguimiento</small></a>
-		<a class="platform-link" href="{% url 'platform_tenant_create' %}"><span>Crear tenant</span><small>Nuevo</small></a>
+		<p class="text-secondary small mb-3">Gestiona tus clientes y acompaña su crecimiento.</p>
+		<button class="btn btn-outline-primary d-lg-none mb-2" type="button" data-bs-toggle="collapse" data-bs-target="#platform-navigation" aria-controls="platform-navigation" aria-expanded="false">Menú de plataforma</button>
+        <nav id="platform-navigation" class="collapse d-lg-block" aria-label="Gestión de plataforma">
+		<a class="platform-link" href="{% url 'platform_dashboard' %}" {% if request.resolver_match.url_name == "platform_dashboard" %}aria-current="page"{% endif %}><span>Resumen</span><small>Global</small></a>
+		<a class="platform-link" href="{% url 'platform_tenant_list' %}" {% if request.resolver_match.url_name == "platform_tenant_list" %}aria-current="page"{% endif %}><span>Clientes</span><small>Seguimiento</small></a>
+		<a class="platform-link" href="{% url 'platform_tenant_create' %}" {% if request.resolver_match.url_name == "platform_tenant_create" %}aria-current="page"{% endif %}><span>Nuevo cliente</span><small>Nuevo</small></a>
+	</nav>
 	</aside>
 
 	<section class="platform-main">

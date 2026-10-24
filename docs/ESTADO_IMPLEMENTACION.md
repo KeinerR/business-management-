@@ -1,7 +1,7 @@
 # Estado de implementación y continuidad
 
-**Actualizado:** 23 de octubre de 2026  
-**Fuente de verdad para continuar el desarrollo:** este documento.  
+**Actualizado:** 24 de octubre de 2026
+**Fuente de verdad para continuar el desarrollo:** este documento.
 **Roadmap de origen:** `AUDITORIA_COMPLETA_2026-06.md`.
 
 ## Estado general
@@ -14,8 +14,8 @@
 | 4 | Módulos escalables (5 bloques) | ✅ Terminada |
 | 5 | UX/UI global y Docker para producción | 🟡 En curso |
 
-**Punto actual:** Fase 5, primera entrega de UX/UI y despliegue preparada.  
-**Siguiente trabajo:** validar el stack detrás del proxy TLS real y cerrar pruebas visuales/responsive en entorno de despliegue.
+**Punto actual:** Fase 5, primera entrega de UX/UI y despliegue preparada.
+**Siguiente trabajo:** ejecutar los criterios de staging en [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md). La implementación local avanzó; no se declara cerrada la fase sin validar HTTPS real.
 
 ## Fases terminadas
 
@@ -100,7 +100,7 @@
 ## Validación acumulada
 
 - Checks: `docker compose -f compose.yml run --rm --no-deps web python manage.py check`.
-- Suite actual: **38 pruebas**, todas aprobadas con `docker compose -f compose.yml run --rm --no-deps web python manage.py test businessmanagement`.
+- Suite actual: **53 pruebas**, todas aprobadas con `docker compose -f compose.yml run --rm --no-deps web python manage.py test businessmanagement`.
 - Verificar migraciones: `docker compose -f compose.yml run --rm --no-deps web python manage.py makemigrations --check --dry-run`.
 - Última migración del bloque documental: `tenantdata/0014_document_documentversion_and_more.py`.
 - Última migración del bloque de importaciones: `tenantdata/0015_importbatch_confirmed_at_importbatch_rolled_back_at_and_more.py`.
@@ -114,9 +114,35 @@
 ## Instrucciones para la siguiente IA
 
 1. Leer este archivo y `AUDITORIA_COMPLETA_2026-06.md`.
-2. Revisar `git status`; el árbol contiene trabajo acumulado aún no consolidado y archivos runtime de Celery que no deben confundirse con código funcional.
+2. Revisar `git status` y preservar cambios existentes; los archivos runtime de Celery versionados no deben confundirse con código funcional.
 3. El bloque de importaciones está terminado; no recrear `ImportBatch`/`ImportedRecord` ni duplicar el lector CSV/XLSX.
 4. La API de escritura y webhooks está implementada y la migración 0016 está aplicada en los esquemas existentes; probar endpoints con JWT en un tenant habilitado antes de publicar integraciones externas.
 5. La primera entrega de Fase 5 está en el árbol; no iniciar el stack de producción sin crear `.env.prod` desde `.env.prod.example` y configurar un proxy TLS real.
 6. Completar la revisión de interfaz en viewport móvil y validar healthcheck, static files, login y tareas Celery en un entorno de staging.
 7. Al terminar la fase, actualizar la tabla y el “Punto actual” de este documento.
+
+## Entrega de cierre de fase 5 — 24 de octubre
+
+- Healthcheck antes del enrutamiento tenant: responde sin tenant público provisionado, valida `ALLOWED_HOSTS`, mantiene redirección HTTPS y ejecuta `SELECT 1` para detectar fallos reales de consulta.
+- Puerto de producción en loopback por defecto; ejemplo de hosts incluye la IP del healthcheck interno.
+- CSS global extraído a estáticos y Bootstrap 5.3.3 servido localmente con integridad SRI verificada; se elimina la descarga de fuentes de Google.
+- Tema sincronizado con Bootstrap, tolerancia a bloqueo de localStorage, contraste oscuro y contención de tablas en paneles móviles.
+- Smoke test Playwright reproducible: Inicio/login, dashboard tenant, facturas y movimientos en 360/768/1440 px; persistencia de tema y ausencia de desbordamiento horizontal. También se verificaron dashboard y listado de tenants de plataforma en los tres tamaños.
+- Suite ampliada a 42 pruebas, incluyendo salud sin tenant, host inválido, HTTPS y fallo de base de datos.
+- Añadidos pipeline CI, smoke test HTTPS de solo lectura y guía de aceptación de staging. CI remoto aún no ejecutado.
+
+### Alcance pendiente fuera de fase 5
+
+Los pendientes de forecast multimoneda, tasas automáticas y PDF de nota débito se implementaron en la entrega siguiente (ver abajo). OCR, canales externos de notificación y partida doble siguen fuera del alcance entregado. No interpretar la tabla de fases como cobertura de cada aspiración del roadmap original.
+
+## Entrega funcional posterior a fase 5
+
+- Conversión compartida con COP como base y fecha exacta por pago; forecast multimoneda con avisos ante tasas faltantes.
+- Sincronización diaria de tasas de referencia USD/EUR por Celery, preservando tasas manuales y aislamiento por tenant. Falta confirmar consulta externa después de aplicar acceso a `open.er-api.com`; no se declara validada en vivo.
+- PDF de nota débito y plantillas de listado/detalle con descarga autenticada y auditoría.
+- Suite vigente: 53 pruebas aprobadas. No hay cambios de modelos ni migraciones nuevas.
+- Operación, límites y evidencia: [CURRENCY_AND_DEBIT_NOTES.md](CURRENCY_AND_DEBIT_NOTES.md).
+
+## Mejora visual de interfaces
+
+Sistema visual compartido en `static/businessmanagement/design.css`: navegación lateral, tarjetas, formularios, tablas, landing y login; estados activos de plataforma, iconos SVG locales y temas claro/oscuro. Validación: 53 pruebas y comprobaciones de navegador en 360/768/1440 px para páginas públicas, tenant y plataforma. No equivale a una auditoría exhaustiva de todos los formularios ni cierra la validación HTTPS pendiente.

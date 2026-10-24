@@ -1,0 +1,22 @@
+{% extends "tenant/base.html" %}
+{% block title %}Nota de débito {{ debit_note.debit_note_number }}{% endblock %}
+{% block tenant_breadcrumb %}Nota de débito{% endblock %}
+{% block workspace_content %}
+<div class="d-flex flex-wrap gap-2 justify-content-between mb-3">
+  <h2 class="h4">Nota de débito {{ debit_note.debit_note_number }}</h2>
+  <div><a class="btn btn-outline-secondary" href="{% url 'debit_note_list' %}">Volver</a> <a class="btn btn-primary" href="{% url 'debit_note_pdf' debit_note.id %}">Descargar PDF</a></div>
+</div>
+<dl class="row">
+  <dt class="col-sm-3">Empresa</dt><dd class="col-sm-9">{{ debit_note.business.business_name }}</dd>
+  <dt class="col-sm-3">Cliente</dt><dd class="col-sm-9">{{ debit_note.third_party.name|default:"Sin tercero" }}</dd>
+  <dt class="col-sm-3">Factura</dt><dd class="col-sm-9">{% if debit_note.invoice %}<a href="{% url 'invoice_detail' debit_note.invoice.id %}">{{ debit_note.invoice.invoice_number }}</a>{% else %}Sin factura{% endif %}</dd>
+  <dt class="col-sm-3">Fecha y estado</dt><dd class="col-sm-9">{{ debit_note.issue_date|date:"d/m/Y" }} · {{ debit_note.get_status_display }}</dd>
+</dl>
+<p>{{ debit_note.description|default:""|linebreaksbr }}</p>
+<div class="table-responsive"><table class="table"><thead><tr><th>Descripción</th><th>Cantidad</th><th>Precio unitario</th><th>Subtotal</th></tr></thead><tbody>
+{% for item in debit_note.items.all %}<tr><td>{{ item.description }}</td><td>{{ item.quantity }}</td><td>{{ item.unit_price|floatformat:2 }}</td><td>{{ item.subtotal|floatformat:2 }}</td></tr>{% empty %}<tr><td colspan="4">Sin ítems.</td></tr>{% endfor %}
+</tbody></table></div>
+<p>Subtotal: {{ debit_note.subtotal|floatformat:2 }} {{ debit_note.currency }} · Impuestos: {{ debit_note.tax_amount|floatformat:2 }} · Retenciones: {{ debit_note.retention_amount|floatformat:2 }}</p>
+<p class="fw-bold">Total: {{ debit_note.total|floatformat:2 }} {{ debit_note.currency }}</p>
+<p>{{ debit_note.notes|default:""|linebreaksbr }}</p>
+{% endblock %}

@@ -1,56 +1,23 @@
-# How SystemManager Works
+# Cómo funciona SystemManager
 
-## Arquitectura multi-tenant
-- SystemManager usa `django-tenants` con esquema por tenant. El esquema `public` contiene la plataforma (tenants, dominios), y cada tenant tiene su propio esquema con datos empresariales (Business, FinancialEntry, ThirdParty, etc.).
+Estado vigente: [ESTADO_IMPLEMENTACION.md](ESTADO_IMPLEMENTACION.md). Despliegue: [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md).
 
-## Flujos principales
-- **Crear tenant:** Desde el panel de plataforma se crea un `Tenant` y un `Domain`. Se inicializan grupos por defecto y se crea una empresa y usuario administrador dentro del esquema del tenant.
-- **Login:** El login valida si la petición llega desde un dominio tenant o desde la plataforma; usuarios staff pueden entrar al panel de plataforma.
-- **Operaciones financieras:** Los movimientos (`FinancialEntry`) se crean dentro del esquema tenant y quedan registrados en `AuditEvent`.
+## Arquitectura y flujos
 
-## APIs para integraciones
-- Se exponen endpoints JSON read-only para permitir integraciones rápidas: `financial-entries`, `third-parties`, `currency-rates`.
-- Los endpoints admiten autenticación por sesión o JWT.
-- Endpoint para obtener token: `/api/token/`
-- Endpoint para renovar token: `/api/token/refresh/`
+Django 5.1 con PostgreSQL y django-tenants: `public` contiene plataforma, tenants y dominios; cada tenant tiene esquema propio para usuarios, empresa y operaciones. Los roles principales son Administrador de empresa, Operador financiero y Solo lectura. Los módulos se habilitan por tenant.
 
-## Actualización de tasas (`CurrencyRate`)
-- El proyecto ya está preparado para ejecutar la actualización automática de tasas con Celery y Redis.
-- La tarea `businessmanagement.tasks.update_currency_rates` consulta la API definida en `CURRENCY_API_URL`, itera todos los tenants activos y crea/actualiza `CurrencyRate` para cada esquema.
-- En caso de error, la tarea registra un `AuditEvent` indicándolo.
+El panel de plataforma provisiona tenants, dominios y administradores y controla estado de servicio. El flujo comercial es cotización → aceptación → factura/cuenta por cobrar → pagos → conciliación. También existen impuestos/retenciones, notas crédito/débito, aprobaciones, notificaciones internas, presupuestos, plan contable, documentos versionados e importaciones CSV/XLSX.
 
-### Configuración recomendada con Docker Compose
-- `compose.yml` ahora incluye los servicios `redis`, `celery_worker` y `celery_beat`.
-- Usa estas variables en `.env`:
+## API y tareas
 
-```
-DB_HOST=db
-CELERY_BROKER_URL=redis://redis:6379/0
-CELERY_RESULT_BACKEND=redis://redis:6379/1
-CURRENCY_API_URL=https://api.example.com/latest_rates
-```
+Se conservan endpoints GET históricos y hay API de escritura `/api/v1/` con autenticación sesión/JWT, permisos por rol/módulo e idempotencia. Consultar `README_API.md` para recursos y webhooks HMAC con entregas Celery.
 
-- Levanta el stack completo con:
+Celery usa Redis. Beat programa vencimiento de facturas y cotizaciones. `update_currency_rates` descarga tasas de referencia USD/EUR desde ExchangeRate-API y las replica por tenant activo sin sobrescribir tasas manuales. Beat la programa a las 03:00 America/Bogota; se puede desactivar con `CURRENCY_AUTO_UPDATE=False`. El cloud requiere aplicar el permiso de red a `open.er-api.com` antes de verificar la consulta real. Ver [tasas y notas débito](CURRENCY_AND_DEBIT_NOTES.md).
 
-```bash
-docker compose -f compose.yml up --build -d
-```
+## Desarrollo y producción
 
-- El servicio `celery_beat` programa la tarea diaria y el `celery_worker` la ejecuta.
+En desarrollo usar explícitamente `compose.yml`; en producción `compose.production.yml`, variables privadas y proxy HTTPS. El Dockerfile ejecuta Gunicorn sin privilegios y WhiteNoise sirve estáticos cuando se habilita. El endpoint `/health/` comprueba una consulta de base de datos sin necesitar un tenant previamente registrado.
 
-### Qué hace la tarea
-1. `beat` lanza `update_currency_rates` según la programación en `config/celery.py`.
-2. El worker evalúa cada tenant en `Tenant.objects.exclude(schema_name='public')`.
-3. Dentro de `schema_context`, actualiza `CurrencyRate` y crea registros de auditoría.
-4. Si falla un tenant, el proceso continúa con demás tenants.
+El comando `create_demo_tenant` crea un usuario con contraseña conocida y solo debe usarse en demos aisladas; el entorno cloud preparado no lo ejecuta. La configuración de desarrollo usa `ensure_dev_tenants` para preparar dominios y módulos sin crear ese usuario.
 
-
-## Recomendaciones operativas
-- En producción usar PostgreSQL, Celery+Redis, y un reverse proxy (nginx) con HTTPS.
-- Configurar backups regulares de la base de datos y rotación de logs.
-- Añadir tests que cubran separación por tenant y permisos.
-
-## Siguientes mejoras sugeridas
-- Endpoints API autenticados con tokens (DRF + SimpleJWT) para integraciones M2M.
-- Exportes a Excel/PDF y paginación en vistas (ya implementada en `financial_entry_list` y `audit_event_list`).
-- Implementar job de actualización de tasas con Celery y monitorización.
+Las 53 pruebas actuales cubren regresiones representativas; faltan validación completa de aislamiento/roles en staging, restauración de backups e integraciones HTTPS reales. Ver la guía de aceptación antes de operar con datos reales.

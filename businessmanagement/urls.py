@@ -252,6 +252,8 @@ urlpatterns = [
     path("debit-notes/<int:debit_note_id>/edit/", views.debit_note_edit, name="debit_note_edit"),
     path("debit-notes/<int:debit_note_id>/cancel/", views.debit_note_cancel, name="debit_note_cancel"),
 
+    path("debit-notes/<int:debit_note_id>/pdf/", views.debit_note_pdf, name="debit_note_pdf"),
+
     # API Endpoints
     path("api/v1/", include(api_v1_router.urls)),
     path(
