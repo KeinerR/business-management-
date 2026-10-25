@@ -1,0 +1,22 @@
+{% extends "tenant/base.html" %}
+{% block title %}{{ page_title }} | System Manager{% endblock %}
+{% block workspace_content %}
+<div class="container py-3" style="max-width:800px">
+  <h2 class="h4 mb-3">{{ page_title }}</h2>
+  <form method="post" class="panel-card">
+    {% csrf_token %}
+    {% for field in form %}
+      <div class="mb-3">
+        {% if field.field.widget.input_type == "checkbox" %}
+          <div class="form-check">{{ field }}<label class="form-check-label" for="{{ field.id_for_label }}">{{ field.label }}</label></div>
+        {% else %}
+          <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}
+        {% endif %}
+        {% for error in field.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}
+      </div>
+    {% endfor %}
+    <button class="btn btn-primary" type="submit">Guardar</button>
+    <a href="{% url 'tax_rule_list' %}" class="btn btn-outline-secondary">Cancelar</a>
+  </form>
+</div>
+{% endblock %}

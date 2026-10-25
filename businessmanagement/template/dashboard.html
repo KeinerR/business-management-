@@ -19,7 +19,7 @@
 			{% endif %}
 		</p>
 	</div>
-	{% if "employees" in enabled_modules %}
+	{% if is_tenant_admin and "employees" in enabled_modules %}
 		<a class="btn btn-sm-brand" href="{% url 'create_employee' %}">Crear empleado</a>
 	{% elif "finances" in enabled_modules %}
 		<a class="btn btn-sm-brand" href="{% url 'financial_entry_create' %}">Nuevo movimiento</a>
@@ -131,10 +131,10 @@
 				{% if "third_parties" in enabled_modules %}
 					<a class="btn btn-outline-secondary" href="{% url 'third_party_create' %}">Nuevo tercero</a>
 				{% endif %}
-				{% if "employees" in enabled_modules %}
+				{% if is_tenant_admin and "employees" in enabled_modules %}
 					<a class="btn btn-sm-brand" href="{% url 'employee_list' %}">Ver empleados</a>
 				{% endif %}
-				{% if "groups" in enabled_modules %}
+				{% if is_tenant_admin and "groups" in enabled_modules %}
 					<a class="btn btn-outline-secondary" href="{% url 'tenant_group_list' %}">Gestionar grupos</a>
 				{% endif %}
 				{% if "invoices" in enabled_modules %}
@@ -178,8 +178,9 @@
 </section>
 {% endif %}
 
-{% if "finances" in enabled_modules %}
+{% if "finances" in enabled_modules or is_tenant_admin and "audit" in enabled_modules %}
 <div class="row g-3 mt-1">
+	{% if "finances" in enabled_modules %}
 	<div class="col-lg-7">
 		<div class="panel-card h-100">
 			<div class="d-flex justify-content-between align-items-center gap-2 flex-wrap mb-3">
@@ -218,6 +219,8 @@
 			</div>
 		</div>
 	</div>
+	{% endif %}
+	{% if is_tenant_admin and "audit" in enabled_modules %}
 	<div class="col-lg-5">
 		<div class="panel-card h-100">
 			<h3 class="h5">Auditoria reciente</h3>
@@ -233,6 +236,7 @@
 			</div>
 		</div>
 	</div>
+	{% endif %}
 </div>
 {% endif %}
 

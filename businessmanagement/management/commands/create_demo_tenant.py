@@ -110,13 +110,15 @@ class Command(BaseCommand):
                     "email": "demo_admin@example.com",
                     "first_name": "Demo",
                     "last_name": "Administrador",
-                    "is_staff": True,
-                    "is_superuser": True,
+                    "is_staff": False,
+                    "is_superuser": False,
                 },
             )
             if user_created:
                 user.set_password("demo1234")
-                user.save()
+            user.is_staff = False
+            user.is_superuser = False
+            user.save(update_fields=("password", "is_staff", "is_superuser"))
 
             # Asegurar grupos predeterminados
             ensure_default_tenant_groups()
@@ -126,17 +128,20 @@ class Command(BaseCommand):
             user.groups.add(admin_group)
 
             # Asegurar perfil de empleado para el admin
-            Employee.objects.get_or_create(
+            employee, _ = Employee.objects.get_or_create(
                 user=user,
                 defaults={
                     "first_name": user.first_name or "Demo",
                     "last_name": user.last_name or "Admin",
                     "email": user.email,
                     "phone": "+57 300 000 0000",
-                    "position": "Administrador Global",
+                    "position": "Administrador de empresa",
                     "business": business,
                 },
             )
+            if employee.position == "Administrador Global":
+                employee.position = "Administrador de empresa"
+                employee.save(update_fields=("position",))
 
             self._create_sample_third_parties()
             self._create_sample_currency_rates()

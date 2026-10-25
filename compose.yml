@@ -31,7 +31,7 @@ services:
         python manage.py create_demo_tenant --type individual --schema demo --name "Demo Persona Natural" --domain demo.127.0.0.1.nip.io &&
         python manage.py runserver 0.0.0.0:5000
     ports:
-      - "5000:5000"
+      - "${WEB_PORT:-5000}:5000"
     volumes:
       - .:/app
     env_file:

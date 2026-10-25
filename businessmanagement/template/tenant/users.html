@@ -22,7 +22,6 @@
                     <th>Nombre</th>
                     <th>Email</th>
                     <th>Roles</th>
-                    <th>Staff</th>
                     <th>Accion</th>
                 </tr>
             </thead>
@@ -39,7 +38,6 @@
                                 <span class="text-secondary">Sin rol</span>
                             {% endfor %}
                         </td>
-                        <td>{% if user.is_staff %}<span class="badge text-bg-success">Si</span>{% else %}<span class="badge text-bg-secondary">No</span>{% endif %}</td>
                         <td><a href="{% url 'tenant_user_edit' user.id %}" class="btn btn-sm btn-outline-secondary">Editar</a></td>
                     </tr>
                 {% empty %}

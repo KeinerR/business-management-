@@ -60,8 +60,7 @@ class TenantAPIWritePermission(BasePermission):
             or request.method not in ("GET", "HEAD", "OPTIONS")
         )
         if needs_elevated_access and not (
-            request.user.is_superuser
-            or request.user.groups.filter(name__in=self.elevated_groups).exists()
+            request.user.groups.filter(name__in=self.elevated_groups).exists()
         ):
             return False
         return True
@@ -219,6 +218,7 @@ class WebhookEndpointViewSet(
     pagination_class = APIPageNumberPagination
     permission_classes = (TenantAPIWritePermission,)
     restricted_api = True
+    required_module = "audit"
     queryset = WebhookEndpoint.objects.all()
 
     def perform_create(self, serializer):
@@ -253,6 +253,7 @@ class WebhookDeliveryViewSet(
     pagination_class = APIPageNumberPagination
     permission_classes = (TenantAPIWritePermission,)
     restricted_api = True
+    required_module = "audit"
     queryset = WebhookDelivery.objects.select_related("endpoint")
 
     def get_queryset(self):
@@ -273,6 +274,8 @@ class WebhookDeliveryViewSet(
 def financial_entries_api(request):
     if not _is_tenant_schema():
         return JsonResponse({'error': 'API disponible solo en contexto tenant'}, status=403)
+    if not request.tenant.is_module_enabled("finances"):
+        return JsonResponse({'error': 'Módulo no habilitado para esta empresa'}, status=403)
 
     qs = FinancialEntry.objects.select_related('third_party', 'created_by').all()
     entry_type = request.GET.get('type')
@@ -321,6 +324,8 @@ def financial_entries_api(request):
 def third_parties_api(request):
     if not _is_tenant_schema():
         return JsonResponse({'error': 'API disponible solo en contexto tenant'}, status=403)
+    if not request.tenant.is_module_enabled("third_parties"):
+        return JsonResponse({'error': 'Módulo no habilitado para esta empresa'}, status=403)
     qs = ThirdParty.objects.filter(is_active=True).order_by('name')
     page = int(request.GET.get('page', 1))
     page_size = int(request.GET.get('page_size', 50))
@@ -339,6 +344,8 @@ def third_parties_api(request):
 def currency_rates_api(request):
     if not _is_tenant_schema():
         return JsonResponse({'error': 'API disponible solo en contexto tenant'}, status=403)
+    if not request.tenant.is_module_enabled("currency_rates"):
+        return JsonResponse({'error': 'Módulo no habilitado para esta empresa'}, status=403)
     qs = CurrencyRate.objects.order_by('-rate_date', 'currency')
     page = int(request.GET.get('page', 1))
     page_size = int(request.GET.get('page_size', 25))

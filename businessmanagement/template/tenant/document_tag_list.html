@@ -1,0 +1,39 @@
+{% extends "tenant/base.html" %}
+{% block title %}Etiquetas documentales | System Manager{% endblock %}
+{% block workspace_content %}
+<div class="container-fluid py-3">
+  <div class="d-flex justify-content-between align-items-center gap-3 mb-3">
+    <div>
+      <h2 class="h4 mb-1">Etiquetas documentales</h2>
+      <p class="text-secondary mb-0">Crea etiquetas reutilizables para clasificar los documentos de esta empresa.</p>
+    </div>
+    {% if is_tenant_admin or is_financial_operator %}
+      <a class="btn btn-primary" href="{% url 'document_tag_create' %}">Nueva etiqueta</a>
+    {% endif %}
+  </div>
+  <div class="table-responsive panel-card">
+    <table class="table table-hover align-middle mb-0">
+      <thead><tr><th>Etiqueta</th><th>Documentos asociados</th><th>Acciones</th></tr></thead>
+      <tbody>
+        {% for tag in tags %}
+          <tr>
+            <td>{{ tag.name }}</td>
+            <td>{{ tag.document_count }}</td>
+            <td>
+              {% if is_tenant_admin or is_financial_operator %}
+                <a class="btn btn-sm btn-outline-primary" href="{% url 'document_tag_edit' tag.id %}">Editar</a>
+                <form class="d-inline" method="post" action="{% url 'document_tag_delete' tag.id %}" onsubmit="return confirm('¿Eliminar esta etiqueta de los documentos asociados?');">
+                  {% csrf_token %}
+                  <button class="btn btn-sm btn-outline-danger" type="submit">Eliminar</button>
+                </form>
+              {% else %}Solo lectura{% endif %}
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="3" class="text-center text-secondary py-4">Todavía no hay etiquetas.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

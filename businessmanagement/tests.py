@@ -15,11 +15,13 @@ from django.db import IntegrityError, transaction
 from django.core.exceptions import ValidationError
 from django.test import SimpleTestCase, TestCase, override_settings
 from django.template.loader import get_template
+from django.urls import resolve
 from openpyxl import Workbook
 from rest_framework.test import APIClient
 from unittest.mock import Mock, patch
 
 from businessmanagement.forms import (
+    DocumentCreateForm,
     InvoiceForm,
     PlatformTenantEditForm,
     QuoteForm,
@@ -39,6 +41,7 @@ from businessmanagement.views import (
     _sync_payment_status,
 )
 from businessmanagement.models import Tenant
+from businessmanagement.modules import AVAILABLE_MODULES
 from businessmanagement.tasks import deliver_webhook, mark_expired_quotes_for_current_schema
 from businessmanagement.services.notifications import notify_users
 from businessmanagement.services.accounting import PUC_STARTER, seed_puc_starter
@@ -61,6 +64,7 @@ from tenantdata.models import (
     Notification,
     ApprovalRequest,
     Account,
+    Employee,
     Budget,
     BudgetLine,
     FinancialCategory,
@@ -70,9 +74,11 @@ from tenantdata.models import (
     TaxRule,
     ThirdParty,
     Document,
+    DocumentTag,
     DocumentVersion,
     ImportBatch,
     ImportedRecord,
+    Project,
     WebhookDelivery,
     WebhookEndpoint,
 )
@@ -494,6 +500,351 @@ class BusinessFlowTests(TenantTestCase):
         self.assertEqual(cash.parent.code, "1105")
         self.assertTrue(cash.accepts_entries)
 
+    def test_financial_operator_can_load_initial_puc(self):
+        self.tenant.enabled_modules.append("chart_accounts")
+        self.tenant.save(update_fields=["enabled_modules"])
+        user = get_user_model().objects.create_user(username="puc-operator")
+        group, _ = Group.objects.get_or_create(name="Operador financiero")
+        user.groups.add(group)
+        client = APIClient(HTTP_HOST=self.domain.domain)
+        client.force_login(user)
+
+        response = client.post("/accounting/accounts/seed-puc/")
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(Account.objects.count(), len(PUC_STARTER))
+
+    def test_financial_operator_can_create_project(self):
+        self.tenant.enabled_modules.append("projects")
+        self.tenant.save(update_fields=["enabled_modules"])
+        user = get_user_model().objects.create_user(username="project-operator")
+        group, _ = Group.objects.get_or_create(name="Operador financiero")
+        user.groups.add(group)
+        client = APIClient(HTTP_HOST=self.domain.domain)
+        client.force_login(user)
+
+        response = client.post(
+            "/projects/create/",
+            {
+                "name": "Proyecto de prueba",
+                "description": "Proyecto creado por operaciones",
+                "project_type": Project.COMPANY,
+                "status": Project.ACTIVE,
+                "start_date": "",
+                "end_date": "",
+                "third_party": "",
+                "owner": "",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(Project.objects.filter(name="Proyecto de prueba").exists())
+
+    def test_financial_operator_can_view_tax_rules(self):
+        user = get_user_model().objects.create_user(username="tax-operator")
+        group, _ = Group.objects.get_or_create(name="Operador financiero")
+        user.groups.add(group)
+        TaxRule.objects.create(
+            business=self.business,
+            name="IVA de prueba",
+            rule_type=TaxRule.IVA,
+            percentage=Decimal("19"),
+        )
+        client = APIClient(HTTP_HOST=self.domain.domain)
+        client.force_login(user)
+
+        response = client.get("/tax-rules/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "IVA de prueba")
+        self.assertNotContains(response, "Nueva regla")
+
+    def test_tenant_admin_can_view_modules_and_create_debit_notes(self):
+        self.tenant.enabled_modules.extend(["debit_notes", "projects"])
+        self.tenant.save(update_fields=["enabled_modules"])
+        user = get_user_model().objects.create_user(username="modules-admin")
+        group, _ = Group.objects.get_or_create(name="Administrador de empresa")
+        user.groups.add(group)
+        client = APIClient(HTTP_HOST=self.domain.domain)
+        client.force_login(user)
+
+        modules_response = client.get("/settings/modules/")
+        debit_list_response = client.get("/debit-notes/")
+        debit_create_response = client.get("/debit-notes/create/")
+
+        self.assertEqual(modules_response.status_code, 200)
+        self.assertContains(modules_response, "Proyectos")
+        self.assertEqual(debit_list_response.status_code, 200)
+        self.assertContains(debit_list_response, "Nueva nota de débito")
+        self.assertEqual(debit_create_response.status_code, 200)
+        self.assertContains(debit_create_response, "Guardar nota de débito")
+        self.assertContains(debit_create_response, "Agregar ítem")
+
+    def test_every_tenant_module_gates_its_page_and_sidebar_link(self):
+        module_pages = (
+            ("finances", "/finance/"),
+            ("projects", "/projects/"),
+            ("third_parties", "/third-parties/"),
+            ("categories", "/categories/"),
+            ("invoices", "/invoices/"),
+            ("quotes", "/quotes/"),
+            ("employees", "/employees/"),
+            ("currency_rates", "/currency-rates/"),
+            ("credit_notes", "/credit-notes/"),
+            ("debit_notes", "/debit-notes/"),
+            ("taxes", "/tax-rules/"),
+            ("banking", "/bank/accounts/"),
+            ("bank_statements", "/bank/statements/"),
+            ("reconciliations", "/bank/reconciliations/"),
+            ("budget", "/budgets/"),
+            ("cartera", "/accounts/"),
+            ("payments", "/payments/"),
+            ("import_batch", "/import/batches/"),
+            ("audit", "/audit/"),
+            ("users", "/users/"),
+            ("groups", "/groups/"),
+            ("notifications", "/notifications/"),
+            ("approvals", "/approvals/"),
+            ("chart_accounts", "/accounting/accounts/"),
+            ("documents", "/documents/"),
+        )
+        self.assertEqual({module for module, _ in module_pages}, {
+            module for module, _label in AVAILABLE_MODULES
+        })
+        self.tenant.enabled_modules = [module for module, _label in AVAILABLE_MODULES]
+        self.tenant.save(update_fields=["enabled_modules"])
+        user = get_user_model().objects.create_user(username="module-matrix-admin")
+        group, _ = Group.objects.get_or_create(name="Administrador de empresa")
+        user.groups.add(group)
+        client = APIClient(HTTP_HOST=self.domain.domain)
+        client.force_login(user)
+
+        enabled_dashboard = client.get("/dashboard/")
+        self.assertEqual(enabled_dashboard.status_code, 200)
+        disabled_paths = []
+        for module, path in module_pages:
+            with self.subTest(module=module):
+                self.assertIn(
+                    module,
+                    getattr(resolve(path).func, "required_modules", ()),
+                )
+                self.assertContains(enabled_dashboard, f'href="{path}"')
+                disabled_paths.append(path)
+
+        self.assertEqual(client.get("/finance/").status_code, 200)
+        self.tenant.enabled_modules = []
+        self.tenant.save(update_fields=["enabled_modules"])
+        disabled_dashboard = client.get("/dashboard/")
+        self.assertEqual(disabled_dashboard.status_code, 200)
+        for path in disabled_paths:
+            with self.subTest(path=path):
+                self.assertNotContains(disabled_dashboard, f'href="{path}"')
+
+        blocked_response = client.get("/finance/")
+        self.assertEqual(blocked_response.status_code, 302)
+        self.assertEqual(blocked_response.url, "/dashboard/")
+
+    def test_tenant_superuser_cannot_bypass_disabled_module_or_admin_role(self):
+        self.tenant.enabled_modules = []
+        self.tenant.save(update_fields=["enabled_modules"])
+        user = get_user_model().objects.create_superuser(
+            username="tenant-superuser",
+            email="tenant-superuser@example.com",
+            password="test-password",
+        )
+        client = APIClient(HTTP_HOST=self.domain.domain)
+        client.force_login(user)
+
+        response = client.get("/finance/")
+        settings_response = client.get("/settings/modules/")
+        api_response = client.get("/api/v1/financial-entries/")
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, "/dashboard/")
+        self.assertEqual(settings_response.status_code, 302)
+        self.assertEqual(settings_response.url, "/dashboard/")
+        self.assertEqual(api_response.status_code, 403)
+
+    def test_disabled_modules_block_corresponding_api_endpoints(self):
+        self.tenant.enabled_modules = []
+        self.tenant.save(update_fields=["enabled_modules"])
+        user = get_user_model().objects.create_user(username="module-api-admin")
+        group, _ = Group.objects.get_or_create(name="Administrador de empresa")
+        user.groups.add(group)
+        client = APIClient(HTTP_HOST=self.domain.domain)
+        client.force_login(user)
+
+        for path in (
+            "/api/financial-entries/",
+            "/api/third-parties/",
+            "/api/currency-rates/",
+            "/api/v1/financial-entries/",
+            "/api/v1/third-parties/",
+            "/api/v1/webhooks/",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(client.get(path).status_code, 403)
+
+    def test_tenant_operator_cannot_manage_users_groups_or_module_settings(self):
+        self.tenant.enabled_modules = [
+            "finances",
+            "users",
+            "groups",
+            "audit",
+        ]
+        self.tenant.save(update_fields=["enabled_modules"])
+        user = get_user_model().objects.create_user(username="module-operator")
+        group, _ = Group.objects.get_or_create(name="Operador financiero")
+        user.groups.add(group)
+        client = APIClient(HTTP_HOST=self.domain.domain)
+        client.force_login(user)
+
+        for path in ("/users/", "/groups/", "/audit/", "/settings/modules/"):
+            with self.subTest(path=path):
+                response = client.get(path)
+                self.assertEqual(response.status_code, 302)
+                self.assertEqual(response.url, "/dashboard/")
+
+    def test_read_only_tenant_role_cannot_create_financial_records(self):
+        user = get_user_model().objects.create_user(username="module-read-only")
+        group, _ = Group.objects.get_or_create(name="Solo lectura")
+        user.groups.add(group)
+        client = APIClient(HTTP_HOST=self.domain.domain)
+        client.force_login(user)
+
+        page_response = client.post("/finance/create/", {})
+        api_response = client.post(
+            "/api/v1/financial-entries/",
+            {},
+            format="json",
+            HTTP_IDEMPOTENCY_KEY="read-only-finance-001",
+        )
+
+        self.assertEqual(page_response.status_code, 302)
+        self.assertEqual(page_response.url, "/dashboard/")
+        self.assertEqual(api_response.status_code, 403)
+        self.assertFalse(FinancialEntry.objects.exists())
+
+    def test_platform_staff_are_not_exposed_as_tenant_employees_or_users(self):
+        self.tenant.enabled_modules.extend(["employees", "users"])
+        self.tenant.save(update_fields=["enabled_modules"])
+        tenant_admin = get_user_model().objects.create_user(
+            username="tenant-data-admin"
+        )
+        admin_group, _ = Group.objects.get_or_create(name="Administrador de empresa")
+        tenant_admin.groups.add(admin_group)
+        platform_user = get_user_model().objects.create_user(
+            username="platform-owner",
+            is_staff=True,
+            is_superuser=True,
+        )
+        Employee.objects.create(
+            user=platform_user,
+            first_name="Dueño",
+            last_name="Plataforma",
+            email="platform@example.com",
+            phone="3000000000",
+            position="Administrador Global",
+            business=self.business,
+        )
+        client = APIClient(HTTP_HOST=self.domain.domain)
+        client.force_login(tenant_admin)
+
+        employees_response = client.get("/employees/")
+        users_response = client.get("/users/")
+        employee_edit_response = client.get(
+            f"/employees/{platform_user.employee_profile.pk}/edit/"
+        )
+        toggle_response = client.post(
+            f"/employees/{platform_user.employee_profile.pk}/toggle-active/"
+        )
+        user_edit_response = client.get(f"/users/{platform_user.pk}/edit/")
+
+        self.assertEqual(employees_response.status_code, 200)
+        self.assertNotContains(employees_response, "platform-owner")
+        self.assertEqual(users_response.status_code, 200)
+        self.assertNotContains(users_response, "platform-owner")
+        self.assertEqual(employee_edit_response.status_code, 302)
+        self.assertEqual(toggle_response.status_code, 302)
+        self.assertTrue(
+            get_user_model().objects.get(pk=platform_user.pk).is_active
+        )
+        self.assertEqual(user_edit_response.status_code, 302)
+
+    def test_document_create_uses_tenant_labels_and_related_record_select(self):
+        self.tenant.enabled_modules.append("documents")
+        self.tenant.save(update_fields=["enabled_modules"])
+        user = get_user_model().objects.create_user(username="document-admin")
+        group, _ = Group.objects.get_or_create(name="Administrador de empresa")
+        user.groups.add(group)
+        tag = DocumentTag.objects.create(business=self.business, name="Contratos")
+        labels_field = DocumentCreateForm(business=self.business)["labels"]
+        self.assertIn('type="checkbox"', str(labels_field))
+        self.assertIn("Contratos", str(labels_field))
+        party = ThirdParty.objects.create(name="Proveedor relacionado")
+        client = APIClient(HTTP_HOST=self.domain.domain)
+        client.force_login(user)
+
+        form_response = client.get("/documents/create/")
+        self.assertEqual(form_response.status_code, 200)
+        self.assertContains(form_response, "Subir documento")
+
+        with TemporaryDirectory() as media_root, override_settings(
+            MEDIA_ROOT=media_root
+        ):
+            response = client.post(
+                "/documents/create/",
+                {
+                    "title": "Contrato de prueba",
+                    "document_type": Document.CONTRACT,
+                    "description": "Documento relacionado",
+                    "labels": [str(tag.pk)],
+                    "entity_type": "third_party",
+                    "entity_id": str(party.pk),
+                    "version_notes": "",
+                    "file": SimpleUploadedFile(
+                        "contrato.pdf", b"%PDF test", content_type="application/pdf"
+                    ),
+                },
+                format="multipart",
+            )
+
+            self.assertEqual(response.status_code, 302)
+            document = Document.objects.get(title="Contrato de prueba")
+            self.assertEqual(list(document.labels.all()), [tag])
+            self.assertEqual(document.related_object, party)
+
+    def test_tenant_admin_can_open_employee_creation(self):
+        self.tenant.enabled_modules.append("employees")
+        self.tenant.save(update_fields=["enabled_modules"])
+        user = get_user_model().objects.create_user(username="employee-admin")
+        group, _ = Group.objects.get_or_create(name="Administrador de empresa")
+        user.groups.add(group)
+        client = APIClient(HTTP_HOST=self.domain.domain)
+        client.force_login(user)
+
+        response = client.get("/employees/create/")
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_tenant_admin_can_log_in_without_employee_profile(self):
+        user = get_user_model().objects.create_user(
+            username="tenant-admin-login",
+            password="test-password",
+        )
+        group, _ = Group.objects.get_or_create(name="Administrador de empresa")
+        user.groups.add(group)
+        client = APIClient(HTTP_HOST=self.domain.domain)
+
+        response = client.post(
+            "/login/",
+            {"username": "tenant-admin-login", "password": "test-password"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, "/dashboard/")
+        self.assertEqual(int(client.session["_auth_user_id"]), user.pk)
+
     def test_account_code_must_extend_parent_code(self):
         parent = Account.objects.create(
             business=self.business,
@@ -847,6 +1198,8 @@ class BusinessFlowTests(TenantTestCase):
         )
 
     def test_api_webhook_endpoints_hide_secret_and_record_dispatch(self):
+        self.tenant.enabled_modules.append("audit")
+        self.tenant.save(update_fields=["enabled_modules"])
         user = get_user_model().objects.create_user(username="api-webhook-user")
         user.groups.add(Group.objects.create(name="Administrador de empresa"))
         client = APIClient(HTTP_HOST=self.domain.domain)
@@ -1032,6 +1385,8 @@ class BusinessFlowTests(TenantTestCase):
 
     def test_editing_an_automatic_rate_makes_it_manual(self):
         user = get_user_model().objects.create_superuser(username="rate-admin", email="admin@example.com", password=None)
+        admin_group, _ = Group.objects.get_or_create(name="Administrador de empresa")
+        user.groups.add(admin_group)
         self.tenant.enabled_modules.append("currency_rates")
         self.tenant.save(update_fields=["enabled_modules"])
         client = APIClient(HTTP_HOST=self.domain.domain)

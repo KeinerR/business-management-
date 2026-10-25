@@ -2,12 +2,15 @@
 {% block title %}Notas de débito{% endblock %}
 {% block tenant_breadcrumb %}Notas de débito{% endblock %}
 {% block workspace_content %}
-<h2 class="h4">Notas de débito</h2>
+<div class="d-flex justify-content-between align-items-center gap-3 flex-wrap mb-3">
+  <div><h2 class="h4 mb-1">Notas de débito</h2><p class="text-secondary mb-0">Ajustes que aumentan el saldo por cobrar del cliente.</p></div>
+  {% if is_tenant_admin or is_financial_operator %}<a class="btn btn-primary" href="{% url 'debit_note_create' %}">Nueva nota de débito</a>{% endif %}
+</div>
 <form method="get" class="d-flex flex-wrap gap-2 mb-3">
   <label>Estado <select name="status" class="form-select"><option value="">Todos</option>{% for value, label in status_choices %}<option value="{{ value }}" {% if selected_status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
   <button class="btn btn-outline-primary align-self-end">Filtrar</button>
 </form>
-<div class="table-responsive"><table class="table"><thead><tr><th>Número</th><th>Fecha</th><th>Cliente</th><th>Estado</th><th>Total</th><th>Acciones</th></tr></thead><tbody>
+<div class="table-responsive panel-card"><table class="table table-hover align-middle mb-0"><thead><tr><th>Número</th><th>Fecha</th><th>Cliente</th><th>Estado</th><th>Total</th><th>Acciones</th></tr></thead><tbody>
 {% for note in debit_notes %}<tr><td>{{ note.debit_note_number }}</td><td>{{ note.issue_date|date:"d/m/Y" }}</td><td>{{ note.third_party.name|default:"Sin tercero" }}</td><td>{{ note.get_status_display }}</td><td>{{ note.total|floatformat:2 }} {{ note.currency }}</td><td><a href="{% url 'debit_note_detail' note.id %}">Detalle</a> · <a href="{% url 'debit_note_pdf' note.id %}">PDF</a></td></tr>{% empty %}<tr><td colspan="6">No hay notas de débito.</td></tr>{% endfor %}
 </tbody></table></div>
 <nav aria-label="Páginas de notas de débito">{% if debit_notes.has_previous %}<a href="?page={{ debit_notes.previous_page_number }}&amp;status={{ selected_status|urlencode }}&amp;invoice={{ selected_invoice|urlencode }}&amp;issue_from={{ request.GET.issue_from|urlencode }}&amp;issue_to={{ request.GET.issue_to|urlencode }}">Anterior</a>{% endif %} <span>Página {{ debit_notes.number }} de {{ debit_notes.paginator.num_pages }}</span> {% if debit_notes.has_next %}<a href="?page={{ debit_notes.next_page_number }}&amp;status={{ selected_status|urlencode }}&amp;invoice={{ selected_invoice|urlencode }}&amp;issue_from={{ request.GET.issue_from|urlencode }}&amp;issue_to={{ request.GET.issue_to|urlencode }}">Siguiente</a>{% endif %}</nav>

@@ -165,6 +165,7 @@
     <a class="sidebar-link" href="{% url 'approval_list' %}" {% if request.resolver_match.url_name == "approval_list" or request.resolver_match.url_name == "approval_detail" %}aria-current="page"{% endif %}><span>Aprobaciones</span><small>Control</small></a>
     {% endif %}
 
+    {% if "finances" in request.tenant.enabled_modules or "categories" in request.tenant.enabled_modules or "chart_accounts" in request.tenant.enabled_modules or "budget" in request.tenant.enabled_modules or "cartera" in request.tenant.enabled_modules or "payments" in request.tenant.enabled_modules or "banking" in request.tenant.enabled_modules or "bank_statements" in request.tenant.enabled_modules or "reconciliations" in request.tenant.enabled_modules or "currency_rates" in request.tenant.enabled_modules %}
     <details class="sidebar-group" open>
       <summary>Finanzas y banca</summary>
       {% if "finances" in request.tenant.enabled_modules %}
@@ -188,17 +189,27 @@
       {% endif %}
       {% if "banking" in request.tenant.enabled_modules %}
       <a class="sidebar-link" href="{% url 'bank_account_list' %}" {% if request.resolver_match.url_name == "bank_account_list" %}aria-current="page"{% endif %}><span>Cuentas bancarias</span><small>Banco</small></a>
+      {% endif %}
+      {% if "bank_statements" in request.tenant.enabled_modules %}
       <a class="sidebar-link" href="{% url 'bank_statement_list' %}" {% if request.resolver_match.url_name == "bank_statement_list" %}aria-current="page"{% endif %}><span>Extractos</span><small>Conciliación</small></a>
+      <a class="sidebar-link" href="{% url 'bank_statement_import_csv' %}"><span>Importar extracto</span><small>CSV</small></a>
+      {% endif %}
+      {% if "reconciliations" in request.tenant.enabled_modules %}
+      <a class="sidebar-link" href="{% url 'reconciliation_list' %}" {% if request.resolver_match.url_name == "reconciliation_list" %}aria-current="page"{% endif %}><span>Conciliación</span><small>Banco</small></a>
       {% endif %}
       {% if "currency_rates" in request.tenant.enabled_modules %}
       <a class="sidebar-link" href="{% url 'currency_rate_list' %}" {% if request.resolver_match.url_name == "currency_rate_list" %}aria-current="page"{% endif %}><span>Tasas de cambio</span><small>FX</small></a>
       {% endif %}
     </details>
+    {% endif %}
 
+    {% if "invoices" in request.tenant.enabled_modules or "quotes" in request.tenant.enabled_modules or "credit_notes" in request.tenant.enabled_modules or "debit_notes" in request.tenant.enabled_modules or "taxes" in request.tenant.enabled_modules or "third_parties" in request.tenant.enabled_modules or "projects" in request.tenant.enabled_modules %}
     <details class="sidebar-group" open>
       <summary>Comercial y CRM</summary>
-      {% if "invoices" in request.tenant.enabled_modules %}
+      {% if "quotes" in request.tenant.enabled_modules %}
       <a class="sidebar-link" href="{% url 'quote_list' %}" {% if request.resolver_match.url_name == "quote_list" or request.resolver_match.url_name == "quote_detail" %}aria-current="page"{% endif %}><span>Cotizaciones</span><small>Ventas</small></a>
+      {% endif %}
+      {% if "invoices" in request.tenant.enabled_modules %}
       <a class="sidebar-link" href="{% url 'invoice_list' %}" {% if request.resolver_match.url_name == "invoice_list" or request.resolver_match.url_name == "invoice_detail" %}aria-current="page"{% endif %}><span>Facturas</span><small>Ventas</small></a>
       {% endif %}
       {% if "credit_notes" in request.tenant.enabled_modules %}
@@ -217,11 +228,14 @@
       <a class="sidebar-link" href="{% url 'project_list' %}" {% if request.resolver_match.url_name == "project_list" %}aria-current="page"{% endif %}><span>Proyectos</span><small>Operación</small></a>
       {% endif %}
     </details>
+    {% endif %}
 
+    {% if "documents" in request.tenant.enabled_modules or "import_batch" in request.tenant.enabled_modules or "employees" in request.tenant.enabled_modules or is_tenant_admin and "users" in request.tenant.enabled_modules or is_tenant_admin and "groups" in request.tenant.enabled_modules or is_tenant_admin and "audit" in request.tenant.enabled_modules %}
     <details class="sidebar-group">
       <summary>Herramientas y equipo</summary>
       {% if "documents" in request.tenant.enabled_modules %}
       <a class="sidebar-link" href="{% url 'document_list' %}" {% if request.resolver_match.url_name == "document_list" or request.resolver_match.url_name == "document_detail" %}aria-current="page"{% endif %}><span>Documentos</span><small>Versiones</small></a>
+      <a class="sidebar-link" href="{% url 'document_tag_list' %}" {% if request.resolver_match.url_name == "document_tag_list" or request.resolver_match.url_name == "document_tag_create" or request.resolver_match.url_name == "document_tag_edit" %}aria-current="page"{% endif %}><span>Etiquetas</span><small>Documentos</small></a>
       {% endif %}
       {% if "import_batch" in request.tenant.enabled_modules %}
       <a class="sidebar-link" href="{% url 'generic_import_batch_list' %}" {% if request.resolver_match.url_name == "generic_import_batch_list" or request.resolver_match.url_name == "generic_import_batch_detail" %}aria-current="page"{% endif %}><span>Importaciones</span><small>CSV/XLSX</small></a>
@@ -229,17 +243,20 @@
       {% if "employees" in request.tenant.enabled_modules %}
       <a class="sidebar-link" href="{% url 'employee_list' %}" {% if request.resolver_match.url_name == "employee_list" %}aria-current="page"{% endif %}><span>Empleados</span><small>Equipo</small></a>
       {% endif %}
-      {% if "users" in request.tenant.enabled_modules %}
+      {% if is_tenant_admin and "users" in request.tenant.enabled_modules %}
       <a class="sidebar-link" href="{% url 'tenant_user_list' %}" {% if request.resolver_match.url_name == "tenant_user_list" %}aria-current="page"{% endif %}><span>Usuarios</span><small>Cuentas</small></a>
       {% endif %}
-      {% if "groups" in request.tenant.enabled_modules %}
+      {% if is_tenant_admin and "groups" in request.tenant.enabled_modules %}
       <a class="sidebar-link" href="{% url 'tenant_group_list' %}" {% if request.resolver_match.url_name == "tenant_group_list" %}aria-current="page"{% endif %}><span>Grupos</span><small>Roles</small></a>
       {% endif %}
-      {% if "audit" in request.tenant.enabled_modules %}
+      {% if is_tenant_admin and "audit" in request.tenant.enabled_modules %}
       <a class="sidebar-link" href="{% url 'audit_event_list' %}" {% if request.resolver_match.url_name == "audit_event_list" %}aria-current="page"{% endif %}><span>Auditoría</span><small>Actividad</small></a>
       {% endif %}
+      {% if is_tenant_admin %}
       <a class="sidebar-link" href="{% url 'module_settings' %}" {% if request.resolver_match.url_name == "module_settings" %}aria-current="page"{% endif %}><span>Módulos</span><small>Configuración</small></a>
+      {% endif %}
     </details>
+    {% endif %}
 
     <p class="text-secondary small mt-3 mb-0">
       La información de este espacio pertenece a tu organización.

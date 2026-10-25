@@ -1,3 +1,38 @@
 {% extends "tenant/base.html" %}
+{% load static %}
 {% block title %}Nueva importación | System Manager{% endblock %}
-{% block workspace_content %}<div class="container-fluid py-3"><div class="d-flex justify-content-between mb-3"><div><h2 class="h4">Nueva importación</h2><p class="text-muted">CSV o XLSX, máximo 10 MB y 5.000 filas. La primera fila debe contener encabezados.</p></div><a class="btn btn-outline-secondary" href="{% url 'generic_import_batch_list' %}">Historial</a></div><form method="post" enctype="multipart/form-data" class="card card-body">{% csrf_token %}{% for field in form %}<div class="mb-3">{% if field.field.widget.input_type == 'checkbox' %}<div class="form-check">{{ field }} <label class="form-check-label">{{ field.label }}</label></div>{% else %}<label class="form-label">{{ field.label }}</label>{{ field }}{% endif %}{% for error in field.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}{% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}</div>{% endfor %}<div><button class="btn btn-primary">Analizar archivo</button></div></form></div>{% endblock %}
+{% block workspace_content %}
+<div class="container-fluid py-3">
+  <div class="d-flex justify-content-between mb-3">
+    <div><h2 class="h4">Nueva importación</h2><p class="text-secondary">CSV o XLSX, máximo 10 MB y 5.000 filas. La primera fila debe contener encabezados.</p></div>
+    <a class="btn btn-outline-secondary" href="{% url 'generic_import_batch_list' %}">Historial</a>
+  </div>
+  <section class="panel-card mb-3" aria-labelledby="import-columns">
+    <h3 class="h5" id="import-columns">Plantillas CSV de ejemplo</h3>
+    <p class="text-secondary">Descarga la plantilla del tipo de datos elegido. Conserva los encabezados; las fechas usan YYYY-MM-DD y los importes deben ser positivos.</p>
+    <div class="d-flex flex-wrap gap-2 mb-3">
+      <a class="btn btn-outline-primary" href="{% static 'businessmanagement/samples/movimientos_ejemplo.csv' %}" download>CSV de movimientos</a>
+      <a class="btn btn-outline-primary" href="{% static 'businessmanagement/samples/terceros_ejemplo.csv' %}" download>CSV de terceros</a>
+    </div>
+    <ul class="small text-secondary mb-0">
+      <li><strong>Movimientos:</strong> concept, entry_type (income, expense, account_receivable o account_payable), status (pending, partial, paid o cancelled), amount, currency (COP, USD, EUR o BINANCE), entry_date obligatorio, due_date opcional; project, category y third_party son nombres existentes opcionales.</li>
+      <li><strong>Terceros:</strong> name obligatorio; identification, email, phone y address opcionales; third_party_type debe ser customer, supplier o both.</li>
+    </ul>
+  </section>
+  <form method="post" enctype="multipart/form-data" class="panel-card">
+    {% csrf_token %}
+    {% for field in form %}
+      <div class="mb-3">
+        {% if field.field.widget.input_type == 'checkbox' %}
+          <div class="form-check">{{ field }} <label class="form-check-label" for="{{ field.id_for_label }}">{{ field.label }}</label></div>
+        {% else %}
+          <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}
+        {% endif %}
+        {% for error in field.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}
+        {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+      </div>
+    {% endfor %}
+    <button class="btn btn-primary">Analizar archivo</button>
+  </form>
+</div>
+{% endblock %}

@@ -12,9 +12,11 @@
 				</h2>
 				<p class="text-muted mb-0">Gestiona el equipo de trabajo que opera en esta empresa</p>
 			</div>
-			<a class="btn btn-primary" href="{% url 'create_employee' %}">
-				<i class="bi bi-plus-circle"></i> Nuevo Empleado
-			</a>
+			{% if is_tenant_admin %}
+				<a class="btn btn-primary" href="{% url 'create_employee' %}">
+					<i class="bi bi-plus-circle"></i> Nuevo Empleado
+				</a>
+			{% endif %}
 		</div>
 	</div>
 
@@ -74,16 +76,20 @@
 									</td>
 									<td class="pe-4">
 										<div class="btn-group btn-group-sm" role="group">
-											<a href="{% url 'employee_edit' employee.id %}" class="btn btn-outline-primary">
-												<i class="bi bi-pencil"></i> Editar
-											</a>
-											<form method="post" action="{% url 'employee_toggle_active' employee.id %}" style="display:inline">
-												{% csrf_token %}
-												<button type="submit" class="btn btn-outline-{% if employee.user.is_active %}danger{% else %}success{% endif %}">
-													<i class="bi bi-{% if employee.user.is_active %}lock{% else %}unlock{% endif %}"></i>
-													{% if employee.user.is_active %}Inhabilitar{% else %}Habilitar{% endif %}
-												</button>
-											</form>
+											{% if is_tenant_admin %}
+												<a href="{% url 'employee_edit' employee.id %}" class="btn btn-outline-primary">
+													<i class="bi bi-pencil"></i> Editar
+												</a>
+												<form method="post" action="{% url 'employee_toggle_active' employee.id %}" style="display:inline">
+													{% csrf_token %}
+													<button type="submit" class="btn btn-outline-{% if employee.user.is_active %}danger{% else %}success{% endif %}">
+														<i class="bi bi-{% if employee.user.is_active %}lock{% else %}unlock{% endif %}"></i>
+														{% if employee.user.is_active %}Inhabilitar{% else %}Habilitar{% endif %}
+													</button>
+												</form>
+											{% else %}
+												<span class="text-secondary">Solo lectura</span>
+											{% endif %}
 										</div>
 									</td>
 								</tr>
@@ -95,9 +101,11 @@
 				<div class="text-center py-5">
 					<i class="bi bi-inbox" style="font-size: 3rem; color: #dee2e6;"></i>
 					<p class="text-muted mt-3 mb-3">No hay empleados creados aún</p>
-					<a href="{% url 'create_employee' %}" class="btn btn-primary btn-sm">
-						<i class="bi bi-plus-circle"></i> Crear el primer empleado
-					</a>
+					{% if is_tenant_admin %}
+						<a href="{% url 'create_employee' %}" class="btn btn-primary btn-sm">
+							<i class="bi bi-plus-circle"></i> Crear el primer empleado
+						</a>
+					{% endif %}
 				</div>
 			{% endif %}
 		</div>
@@ -123,4 +131,3 @@
 	}
 </style>
 {% endblock %}
-

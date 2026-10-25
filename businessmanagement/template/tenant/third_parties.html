@@ -11,9 +11,9 @@
 			</h2>
 			<p class="text-muted mb-0">Directorio de terceros para asociar movimientos, cobros y pagos</p>
 		</div>
-		<a class="btn btn-primary" href="{% url 'third_party_create' %}">
+		{% if is_tenant_admin or is_financial_operator %}<a class="btn btn-primary" href="{% url 'third_party_create' %}">
 			<i class="bi bi-plus-circle"></i> Nuevo Tercero
-		</a>
+		</a>{% endif %}
 	</div>
 </div>
 
@@ -22,7 +22,7 @@
 		{% if third_parties %}
 			<div class="table-responsive">
 				<table class="table table-hover align-middle mb-0">
-					<thead class="table-light border-bottom-2">
+					<thead class="border-bottom-2">
 						<tr>
 							<th class="ps-4 fw-bold text-muted">Nombre</th>
 							<th class="fw-bold text-muted">Tipo</th>
@@ -36,7 +36,7 @@
 						{% for third_party in third_parties %}
 							<tr class="border-bottom">
 								<td class="ps-4">
-									<div class="fw-semibold text-dark">{{ third_party.name }}</div>
+									<div class="fw-semibold text-body">{{ third_party.name }}</div>
 									{% if third_party.company_id %}
 										<small class="text-muted">RIF/NIT: {{ third_party.company_id }}</small>
 									{% endif %}
@@ -72,7 +72,7 @@
 									{% endif %}
 								</td>
 								<td class="pe-4">
-									<div class="btn-group btn-group-sm" role="group">
+									{% if is_tenant_admin or is_financial_operator %}<div class="btn-group btn-group-sm" role="group">
 										<a class="btn btn-outline-primary" href="{% url 'third_party_edit' third_party.id %}">
 											<i class="bi bi-pencil"></i> Editar
 										</a>
@@ -84,6 +84,7 @@
 											</button>
 										</form>
 									</div>
+									{% else %}<span class="text-secondary">Solo lectura</span>{% endif %}
 								</td>
 							</tr>
 						{% endfor %}
@@ -94,21 +95,17 @@
 			<div class="text-center py-5">
 				<i class="bi bi-inbox" style="font-size: 3rem; color: #dee2e6;"></i>
 				<p class="text-muted mt-3 mb-3">No hay terceros registrados aún</p>
-				<a href="{% url 'third_party_create' %}" class="btn btn-primary btn-sm">
+				{% if is_tenant_admin or is_financial_operator %}<a href="{% url 'third_party_create' %}" class="btn btn-primary btn-sm">
 					<i class="bi bi-plus-circle"></i> Crear el primer tercero
-				</a>
+				</a>{% endif %}
 			</div>
 		{% endif %}
 	</div>
 </div>
 
 <style>
-	.table-light {
-		background-color: #f8f9fa !important;
-	}
-	
 	.border-bottom-2 {
-		border-bottom: 2px solid #dee2e6 !important;
+		border-bottom: 2px solid var(--sm-line) !important;
 	}
 	
 	.btn-group-sm .btn {
@@ -128,13 +125,8 @@
 		transition: background-color 0.2s ease;
 	}
 	
-	tbody tr:hover {
+	:root:not([data-theme="dark"]) tbody tr:hover {
 		background-color: #f8f9fa;
-	}
-	
-	.bg-opacity-10 {
-		opacity: 0.1;
 	}
 </style>
 {% endblock %}
-

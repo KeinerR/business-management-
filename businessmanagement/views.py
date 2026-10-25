@@ -11,6 +11,7 @@ from django.contrib.auth.models import Group
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ObjectDoesNotExist
 from django.conf import settings
+from django.contrib.contenttypes.models import ContentType
 from django.db import connection, transaction, OperationalError, ProgrammingError
 from django.db.models import Count, Sum, Q
 from django.core.paginator import Paginator
@@ -56,6 +57,7 @@ from tenantdata.models import (
     ApprovalRequest,
     Account,
     Document,
+    DocumentTag,
     DocumentVersion,
 )
 
@@ -88,6 +90,7 @@ from .forms import (
     ApprovalDecisionForm,
     AccountForm,
     DocumentCreateForm,
+    DocumentTagForm,
     DocumentVersionForm,
 )
 from .models import Domain, Tenant
@@ -166,9 +169,6 @@ def module_enabled_required(module_name: str):
     def decorator(view_func):
         @wraps(view_func)
         def wrapper(request, *args, **kwargs):
-            if request.user.is_superuser:
-                return view_func(request, *args, **kwargs)
-
             tenant = getattr(request, "tenant", None)
             if not tenant or not tenant.is_module_enabled(module_name):
                 messages.error(
@@ -178,6 +178,11 @@ def module_enabled_required(module_name: str):
                 return redirect("dashboard")
             return view_func(request, *args, **kwargs)
 
+        wrapper.required_modules = (
+            *getattr(view_func, "required_modules", ()),
+            module_name,
+        )
+        wrapper.required_module = module_name
         return wrapper
 
     return decorator
@@ -191,10 +196,6 @@ def tenant_group_required(*group_names):
     def decorator(view_func):
         @wraps(view_func)
         def wrapper(request, *args, **kwargs):
-            # Los superusuarios siempre tienen acceso
-            if request.user.is_superuser:
-                return view_func(request, *args, **kwargs)
-
             if not any(has_tenant_group(request.user, name) for name in group_names):
                 messages.error(
                     request, "No tienes permiso para acceder a esta sección."
@@ -202,6 +203,10 @@ def tenant_group_required(*group_names):
                 return redirect("dashboard")
             return view_func(request, *args, **kwargs)
 
+        wrapper.required_groups = (
+            *getattr(view_func, "required_groups", ()),
+            group_names,
+        )
         return wrapper
 
     return decorator
@@ -285,8 +290,11 @@ def login_view(request):
                 except ObjectDoesNotExist:
                     employee_profile = None
 
+                is_tenant_admin = has_tenant_group(
+                    user, "Administrador de empresa"
+                )
                 if employee_profile is None and not (
-                    user.is_staff or user.is_superuser
+                    is_tenant_admin or user.is_staff or user.is_superuser
                 ):
                     form.add_error(
                         None, "Este usuario no pertenece a la empresa actual."
@@ -332,39 +340,76 @@ def dashboard_view(request):
     tenant = request.tenant
     enabled_modules = set(tenant.enabled_modules or [])
     business = Business.objects.first()
-    employee_count = Employee.objects.count() if "employees" in enabled_modules else 0
-    user_count = get_user_model().objects.count() if "users" in enabled_modules else 0
+    employee_count = (
+        Employee.objects.filter(
+            user__is_staff=False,
+            user__is_superuser=False,
+        ).count()
+        if "employees" in enabled_modules
+        else 0
+    )
+    user_count = (
+        get_user_model()
+        .objects.filter(is_staff=False, is_superuser=False)
+        .count()
+        if "users" in enabled_modules
+        else 0
+    )
     third_party_count = (
         ThirdParty.objects.filter(is_active=True).count()
         if "third_parties" in enabled_modules
         else 0
     )
-    pending_count = FinancialEntry.objects.filter(
-        status__in=[FinancialEntry.PENDING, FinancialEntry.PARTIAL]
-    ).count()
-    totals_by_type = FinancialEntry.objects.values("entry_type").annotate(
-        total=Sum("amount")
+    finance_enabled = "finances" in enabled_modules
+    pending_count = (
+        FinancialEntry.objects.filter(
+            status__in=[FinancialEntry.PENDING, FinancialEntry.PARTIAL]
+        ).count()
+        if finance_enabled
+        else 0
+    )
+    totals_by_type = (
+        FinancialEntry.objects.values("entry_type").annotate(total=Sum("amount"))
+        if finance_enabled
+        else []
     )
     totals = {row["entry_type"]: row["total"] or 0 for row in totals_by_type}
-    latest_entries = FinancialEntry.objects.select_related(
-        "third_party", "created_by", "project", "category"
-    )[:6]
-    latest_audit_events = AuditEvent.objects.select_related("actor")[:6]
-    latest_rates = CurrencyRate.objects.order_by("-rate_date", "currency")[:3]
+    latest_entries = (
+        FinancialEntry.objects.select_related(
+            "third_party", "created_by", "project", "category"
+        )[:6]
+        if finance_enabled
+        else []
+    )
+    latest_audit_events = (
+        AuditEvent.objects.select_related("actor")[:6]
+        if "audit" in enabled_modules
+        and has_tenant_group(request.user, "Administrador de empresa")
+        else []
+    )
+    latest_rates = (
+        CurrencyRate.objects.order_by("-rate_date", "currency")[:3]
+        if "currency_rates" in enabled_modules
+        else []
+    )
 
     today = date.today()
     current_month_start = date(today.year, today.month, 1)
-    current_month_entries = FinancialEntry.objects.filter(
-        entry_date__gte=current_month_start,
-        entry_date__lte=today,
-        currency="COP",
-    )
-    income_current_month = current_month_entries.filter(
-        entry_type=FinancialEntry.INCOME
-    ).aggregate(Sum("amount"))["amount__sum"] or Decimal("0.00")
-    expense_current_month = current_month_entries.filter(
-        entry_type=FinancialEntry.EXPENSE
-    ).aggregate(Sum("amount"))["amount__sum"] or Decimal("0.00")
+    if finance_enabled:
+        current_month_entries = FinancialEntry.objects.filter(
+            entry_date__gte=current_month_start,
+            entry_date__lte=today,
+            currency="COP",
+        )
+        income_current_month = current_month_entries.filter(
+            entry_type=FinancialEntry.INCOME
+        ).aggregate(Sum("amount"))["amount__sum"] or Decimal("0.00")
+        expense_current_month = current_month_entries.filter(
+            entry_type=FinancialEntry.EXPENSE
+        ).aggregate(Sum("amount"))["amount__sum"] or Decimal("0.00")
+    else:
+        income_current_month = Decimal("0.00")
+        expense_current_month = Decimal("0.00")
     monthly_max = max(income_current_month, expense_current_month, Decimal("1.00"))
 
     return render(
@@ -591,7 +636,7 @@ def forecast_dashboard(request):
 @tenant_required
 @module_enabled_required("documents")
 def document_list(request):
-    documents = Document.objects.select_related("created_by", "business").prefetch_related("versions").filter(
+    documents = Document.objects.select_related("created_by", "business", "content_type").prefetch_related("versions", "labels").filter(
         business=Business.objects.first()
     )
     status = request.GET.get("status", Document.ACTIVE)
@@ -602,7 +647,12 @@ def document_list(request):
     if document_type in dict(Document.TYPE_CHOICES):
         documents = documents.filter(document_type=document_type)
     if query:
-        documents = documents.filter(Q(title__icontains=query) | Q(description__icontains=query) | Q(tags__icontains=query))
+        documents = documents.filter(
+            Q(title__icontains=query)
+            | Q(description__icontains=query)
+            | Q(tags__icontains=query)
+            | Q(labels__name__icontains=query)
+        ).distinct()
     return render(request, "tenant/document_list.html", {
         "documents": Paginator(documents, 25).get_page(request.GET.get("page", 1)),
         "status_choices": Document.STATUS_CHOICES,
@@ -622,25 +672,105 @@ def document_create(request):
     if not business:
         messages.error(request, "Primero debes crear la empresa asociada al tenant.")
         return redirect("dashboard")
-    form = DocumentCreateForm(request.POST or None, request.FILES or None)
+    form = DocumentCreateForm(
+        request.POST or None,
+        request.FILES or None,
+        business=business,
+    )
     if request.method == "POST" and form.is_valid():
         with transaction.atomic():
             document = form.save(commit=False)
             document.business = business
             document.created_by = request.user
+            document.entity_type = form.cleaned_data["entity_type"]
+            document.entity_id = form.cleaned_data["entity_id"] or None
+            related_model = form.RELATED_RECORD_MODELS.get(document.entity_type)
+            document.content_type = (
+                ContentType.objects.get_for_model(related_model)
+                if related_model and document.entity_id
+                else None
+            )
             document.save()
+            form.save_m2m()
             version = add_document_version(document, form.cleaned_data["file"], request.user, form.cleaned_data["version_notes"])
             record_audit_event(request, AuditEvent.CREATE, "document", f"Documento creado: {document.title} (v{version.version})", document.pk)
         messages.success(request, "Documento y primera versión guardados.")
         return redirect("document_detail", document_id=document.pk)
-    return render(request, "tenant/document_form.html", {"form": form})
+    return render(
+        request,
+        "tenant/document_form.html",
+        {"form": form, "related_options": form.related_options},
+    )
+
+
+@login_required
+@tenant_required
+@module_enabled_required("documents")
+def document_tag_list(request):
+    tags = DocumentTag.objects.filter(business=Business.objects.first()).annotate(
+        document_count=Count("documents")
+    )
+    return render(request, "tenant/document_tag_list.html", {"tags": tags})
+
+
+@login_required
+@tenant_required
+@module_enabled_required("documents")
+@tenant_group_required("Administrador de empresa", "Operador financiero")
+def document_tag_create(request):
+    business = Business.objects.first()
+    if business is None:
+        messages.error(request, "Primero debes crear la empresa asociada a este tenant.")
+        return redirect("dashboard")
+    form = DocumentTagForm(request.POST or None, business=business)
+    if request.method == "POST" and form.is_valid():
+        tag = form.save(commit=False)
+        tag.business = business
+        tag.save()
+        record_audit_event(request, AuditEvent.CREATE, "document_tag", f"Etiqueta creada: {tag.name}", tag.pk)
+        messages.success(request, "Etiqueta creada correctamente.")
+        return redirect("document_tag_list")
+    return render(request, "tenant/document_tag_form.html", {"form": form, "page_title": "Nueva etiqueta"})
+
+
+@login_required
+@tenant_required
+@module_enabled_required("documents")
+@tenant_group_required("Administrador de empresa", "Operador financiero")
+def document_tag_edit(request, tag_id):
+    tag = DocumentTag.objects.filter(pk=tag_id, business=Business.objects.first()).first()
+    if tag is None:
+        raise Http404("Etiqueta no encontrada.")
+    form = DocumentTagForm(request.POST or None, instance=tag, business=tag.business)
+    if request.method == "POST" and form.is_valid():
+        tag = form.save()
+        record_audit_event(request, AuditEvent.UPDATE, "document_tag", f"Etiqueta actualizada: {tag.name}", tag.pk)
+        messages.success(request, "Etiqueta actualizada correctamente.")
+        return redirect("document_tag_list")
+    return render(request, "tenant/document_tag_form.html", {"form": form, "tag": tag, "page_title": "Editar etiqueta"})
+
+
+@login_required
+@tenant_required
+@module_enabled_required("documents")
+@tenant_group_required("Administrador de empresa", "Operador financiero")
+@require_POST
+def document_tag_delete(request, tag_id):
+    tag = DocumentTag.objects.filter(pk=tag_id, business=Business.objects.first()).first()
+    if tag is None:
+        raise Http404("Etiqueta no encontrada.")
+    name = tag.name
+    tag.delete()
+    record_audit_event(request, AuditEvent.DELETE, "document_tag", f"Etiqueta eliminada: {name}", tag_id)
+    messages.success(request, "Etiqueta eliminada.")
+    return redirect("document_tag_list")
 
 
 @login_required
 @tenant_required
 @module_enabled_required("documents")
 def document_detail(request, document_id):
-    document = Document.objects.select_related("created_by").prefetch_related("versions__uploaded_by").filter(
+    document = Document.objects.select_related("created_by", "content_type").prefetch_related("versions__uploaded_by", "labels").filter(
         pk=document_id, business=Business.objects.first()
     ).first()
     if not document:
@@ -905,9 +1035,10 @@ def platform_tenant_create(request):
                 email=cleaned_data["admin_email"],
                 first_name=cleaned_data["admin_first_name"],
                 last_name=cleaned_data["admin_last_name"],
-                is_staff=True,
-                is_superuser=True,
+                is_staff=False,
+                is_superuser=False,
             )
+            user.groups.add(Group.objects.get(name="Administrador de empresa"))
             Employee.objects.create(
                 user=user,
                 first_name=cleaned_data["admin_first_name"],
@@ -1012,6 +1143,7 @@ def logout_view(request):
 
 @login_required
 @tenant_required
+@module_enabled_required("employees")
 @tenant_group_required("Administrador de empresa")
 def create_employee_view(request):
 
@@ -1078,20 +1210,28 @@ def create_employee_view(request):
 
 @login_required
 @tenant_required
+@module_enabled_required("employees")
 def employee_list(request):
-    employees = Employee.objects.select_related("user", "business").order_by(
-        "first_name", "last_name"
+    employees = (
+        Employee.objects.select_related("user", "business")
+        .filter(user__is_staff=False, user__is_superuser=False)
+        .order_by("first_name", "last_name")
     )
     return render(request, "employee/employee_list.html", {"employees": employees})
 
 
 @login_required
 @tenant_required
+@module_enabled_required("employees")
 @tenant_group_required("Administrador de empresa")
 def employee_edit(request, employee_id):
     employee = (
         Employee.objects.select_related("user", "business")
-        .filter(pk=employee_id)
+        .filter(
+            pk=employee_id,
+            user__is_staff=False,
+            user__is_superuser=False,
+        )
         .first()
     )
     if employee is None:
@@ -1138,17 +1278,28 @@ def employee_edit(request, employee_id):
 
 @login_required
 @tenant_required
+@module_enabled_required("users")
+@tenant_group_required("Administrador de empresa")
 def tenant_user_list(request):
-    users = get_user_model().objects.prefetch_related("groups").order_by("username")
+    users = (
+        get_user_model()
+        .objects.filter(is_staff=False, is_superuser=False)
+        .prefetch_related("groups")
+        .order_by("username")
+    )
     return render(request, "tenant/users.html", {"users": users})
 
 
 @login_required
 @tenant_required
+@module_enabled_required("users")
 @tenant_group_required("Administrador de empresa")
 def tenant_user_edit(request, user_id):
     user = (
-        get_user_model().objects.filter(pk=user_id).prefetch_related("groups").first()
+        get_user_model()
+        .objects.filter(pk=user_id, is_staff=False, is_superuser=False)
+        .prefetch_related("groups")
+        .first()
     )
     if user is None:
         messages.error(request, "Usuario no encontrado.")
@@ -1174,6 +1325,8 @@ def tenant_user_edit(request, user_id):
 
 @login_required
 @tenant_required
+@module_enabled_required("groups")
+@tenant_group_required("Administrador de empresa")
 def tenant_group_list(request):
     ensure_default_tenant_groups()
     groups = Group.objects.order_by("name")
@@ -1182,6 +1335,7 @@ def tenant_group_list(request):
 
 @login_required
 @tenant_required
+@module_enabled_required("groups")
 @tenant_group_required("Administrador de empresa")
 def tenant_group_create(request):
     form = TenantGroupForm(request.POST or None)
@@ -1201,6 +1355,7 @@ def tenant_group_create(request):
 
 @login_required
 @tenant_required
+@module_enabled_required("groups")
 @tenant_group_required("Administrador de empresa")
 def tenant_group_edit(request, group_id):
     group = Group.objects.filter(pk=group_id).first()
@@ -1227,6 +1382,7 @@ def tenant_group_edit(request, group_id):
 
 @login_required
 @tenant_required
+@module_enabled_required("third_parties")
 def third_party_list(request):
     third_parties = ThirdParty.objects.order_by("name")
     return render(
@@ -1236,6 +1392,7 @@ def third_party_list(request):
 
 @login_required
 @tenant_required
+@module_enabled_required("third_parties")
 @tenant_group_required("Administrador de empresa", "Operador financiero")
 def third_party_create(request):
     form = ThirdPartyForm(request.POST or None)
@@ -1263,6 +1420,7 @@ def third_party_create(request):
 
 @login_required
 @tenant_required
+@module_enabled_required("third_parties")
 @tenant_group_required("Administrador de empresa", "Operador financiero")
 def third_party_edit(request, third_party_id):
     third_party = ThirdParty.objects.filter(pk=third_party_id).first()
@@ -1298,6 +1456,7 @@ def third_party_edit(request, third_party_id):
 
 @login_required
 @tenant_required
+@module_enabled_required("third_parties")
 @tenant_group_required("Administrador de empresa", "Operador financiero")
 @require_POST
 def third_party_toggle_active(request, third_party_id):
@@ -1611,6 +1770,7 @@ def financial_entry_cancel(request, entry_id):
 
 @login_required
 @tenant_required
+@module_enabled_required("currency_rates")
 @tenant_group_required("Administrador de empresa", "Operador financiero")
 def currency_rate_edit(request, rate_id):
     rate = CurrencyRate.objects.filter(pk=rate_id).first()
@@ -1648,10 +1808,15 @@ def currency_rate_edit(request, rate_id):
 
 @login_required
 @tenant_required
+@module_enabled_required("employees")
 @tenant_group_required("Administrador de empresa")
 @require_POST
 def employee_toggle_active(request, employee_id):
-    employee = Employee.objects.select_related("user").filter(pk=employee_id).first()
+    employee = Employee.objects.select_related("user").filter(
+        pk=employee_id,
+        user__is_staff=False,
+        user__is_superuser=False,
+    ).first()
     if employee is None:
         messages.error(request, "Empleado no encontrado.")
         return redirect("employee_list")
@@ -1676,6 +1841,7 @@ def employee_toggle_active(request, employee_id):
 
 @login_required
 @tenant_required
+@module_enabled_required("currency_rates")
 def currency_rate_list(request):
     rates = CurrencyRate.objects.order_by("-rate_date", "currency")[:60]
     return render(request, "tenant/currency_rates.html", {"rates": rates})
@@ -1683,6 +1849,7 @@ def currency_rate_list(request):
 
 @login_required
 @tenant_required
+@module_enabled_required("currency_rates")
 @tenant_group_required("Administrador de empresa", "Operador financiero")
 def currency_rate_create(request):
     form = CurrencyRateForm(request.POST or None)
@@ -1705,6 +1872,8 @@ def currency_rate_create(request):
 
 @login_required
 @tenant_required
+@module_enabled_required("audit")
+@tenant_group_required("Administrador de empresa")
 def audit_event_list(request):
     events = AuditEvent.objects.select_related("actor").all()
     actor = request.GET.get("actor")
@@ -1854,6 +2023,7 @@ def approval_decide(request, approval_id):
 
 @login_required
 @tenant_required
+@module_enabled_required("notifications")
 def notification_list(request):
     notifications = Notification.objects.filter(recipient=request.user)
     if request.GET.get("status") == "unread":
@@ -1868,6 +2038,7 @@ def notification_list(request):
 
 @login_required
 @tenant_required
+@module_enabled_required("notifications")
 @require_POST
 def notification_read_all(request):
     Notification.objects.filter(recipient=request.user, is_read=False).update(
@@ -1879,6 +2050,7 @@ def notification_read_all(request):
 
 @login_required
 @tenant_required
+@module_enabled_required("notifications")
 def notification_open(request, notification_id):
     notification = Notification.objects.filter(
         pk=notification_id, recipient=request.user
@@ -2417,7 +2589,7 @@ def invoice_cancel(request, invoice_id):
 
 @login_required
 @tenant_required
-@module_enabled_required("invoices")
+@module_enabled_required("quotes")
 def quote_list(request):
     quotes = Quote.objects.select_related("project", "third_party", "created_by", "business").all()
     status = request.GET.get("status")
@@ -2453,7 +2625,7 @@ def quote_list(request):
 
 @login_required
 @tenant_required
-@module_enabled_required("invoices")
+@module_enabled_required("quotes")
 @tenant_group_required("Administrador de empresa", "Operador financiero")
 def quote_create(request):
     business = Business.objects.first()
@@ -2523,7 +2695,7 @@ def quote_create(request):
 
 @login_required
 @tenant_required
-@module_enabled_required("invoices")
+@module_enabled_required("quotes")
 @tenant_group_required("Administrador de empresa", "Operador financiero")
 def quote_edit(request, quote_id):
     quote = Quote.objects.select_related("business").filter(pk=quote_id).first()
@@ -2592,7 +2764,7 @@ def quote_edit(request, quote_id):
 
 @login_required
 @tenant_required
-@module_enabled_required("invoices")
+@module_enabled_required("quotes")
 def quote_detail(request, quote_id):
     quote = (
         Quote.objects.select_related("business", "project", "third_party", "created_by")
@@ -2610,7 +2782,7 @@ def quote_detail(request, quote_id):
 
 @login_required
 @tenant_required
-@module_enabled_required("invoices")
+@module_enabled_required("quotes")
 @tenant_group_required("Administrador de empresa", "Operador financiero")
 @require_POST
 def quote_accept(request, quote_id):
@@ -2742,6 +2914,7 @@ def _convert_quote_to_invoice(quote: Quote, created_by_user):
 
 @login_required
 @tenant_required
+@module_enabled_required("quotes")
 @module_enabled_required("invoices")
 @tenant_group_required("Administrador de empresa", "Operador financiero")
 @require_POST
@@ -3906,7 +4079,7 @@ def payment_list(request):
 
 @login_required
 @tenant_required
-@module_enabled_required("finances")
+@module_enabled_required("payments")
 @tenant_group_required("Administrador de empresa", "Operador financiero")
 def payment_create(request, entry_id):
     financial_entry = (
@@ -4244,6 +4417,7 @@ def generic_import_batch_detail(request, batch_id):
 @login_required
 @tenant_required
 @module_enabled_required("projects")
+@tenant_group_required("Administrador de empresa", "Operador financiero")
 def project_list(request):
     projects = Project.objects.select_related("third_party", "owner").all()
     status = request.GET.get("status")
@@ -4269,7 +4443,8 @@ def project_list(request):
 
 @login_required
 @tenant_required
-@tenant_group_required("Administrador de empresa")
+@module_enabled_required("projects")
+@tenant_group_required("Administrador de empresa", "Operador financiero")
 def project_create(request):
     business = Business.objects.first()
     form = ProjectForm(request.POST or None)
@@ -4295,7 +4470,8 @@ def project_create(request):
 
 @login_required
 @tenant_required
-@tenant_group_required("Administrador de empresa")
+@module_enabled_required("projects")
+@tenant_group_required("Administrador de empresa", "Operador financiero")
 def project_edit(request, project_id):
     project = Project.objects.filter(pk=project_id).first()
     if not project:
@@ -4378,7 +4554,7 @@ def account_edit(request, account_id):
 @login_required
 @tenant_required
 @module_enabled_required("chart_accounts")
-@tenant_group_required("Administrador de empresa")
+@tenant_group_required("Administrador de empresa", "Operador financiero")
 @require_POST
 def account_seed_puc(request):
     business = Business.objects.first()
@@ -4394,6 +4570,7 @@ def account_seed_puc(request):
 
 @login_required
 @tenant_required
+@module_enabled_required("categories")
 def financial_category_list(request):
     categories = FinancialCategory.objects.select_related("account").all()
     return render(
@@ -4403,6 +4580,7 @@ def financial_category_list(request):
 
 @login_required
 @tenant_required
+@module_enabled_required("categories")
 @tenant_group_required("Administrador de empresa")
 def financial_category_create(request):
     business = Business.objects.first()
@@ -4429,6 +4607,7 @@ def financial_category_create(request):
 
 @login_required
 @tenant_required
+@module_enabled_required("categories")
 @tenant_group_required("Administrador de empresa")
 def financial_category_edit(request, category_id):
     category = FinancialCategory.objects.filter(pk=category_id).first()
@@ -4624,7 +4803,7 @@ def bank_account_edit(request, account_id):
 @login_required
 @tenant_required
 @module_enabled_required("taxes")
-@tenant_group_required("Administrador de empresa")
+@tenant_group_required("Administrador de empresa", "Operador financiero")
 def tax_rule_list(request):
     tax_rules = TaxRule.objects.filter(business=Business.objects.first()).order_by("name")
     return render(
@@ -4694,7 +4873,7 @@ def tax_rule_edit(request, tax_rule_id):
 
 @login_required
 @tenant_required
-@module_enabled_required("invoices") # Quotes are part of invoices module
+@module_enabled_required("quotes")
 def quote_pdf(request, quote_id):
     """Generate PDF for a quote"""
     try:
@@ -5011,7 +5190,7 @@ def credit_note_pdf(request, credit_note_id):
 
 @login_required
 @tenant_required
-@module_enabled_required("banking")
+@module_enabled_required("bank_statements")
 def bank_statement_list(request):
     """Lista de extractos bancarios importados."""
     statements = BankStatement.objects.select_related("bank_account").all().order_by("-imported_at")
@@ -5024,7 +5203,7 @@ def bank_statement_list(request):
 
 @login_required
 @tenant_required
-@module_enabled_required("banking")
+@module_enabled_required("reconciliations")
 def reconciliation_list(request):
     """Dashboard de conciliaciones entre extractos y movimientos."""
     from tenantdata.models import Reconciliation

@@ -28,6 +28,7 @@ from tenantdata.models import (
     ApprovalRequest,
     Account,
     Document,
+    DocumentTag,
     # Nota: DebitNote debe existir en tenantdata.models, pero si el import falla
     # (por dependencia circular en runtime) evitamos que el NameError derribe el worker.
     DebitNote,
@@ -1064,17 +1065,107 @@ def validate_document_file(uploaded):
 class DocumentCreateForm(forms.ModelForm):
     file = forms.FileField(label="Archivo", validators=[validate_document_file])
     version_notes = forms.CharField(label="Notas de la versión", required=False, widget=forms.Textarea(attrs={"rows": 2}))
+    entity_type = forms.ChoiceField(
+        label="Tipo de registro relacionado",
+        required=False,
+        choices=(
+            ("", "Sin relación"),
+            ("financial_entry", "Movimiento financiero"),
+            ("third_party", "Tercero"),
+            ("invoice", "Factura"),
+            ("quote", "Cotización"),
+            ("project", "Proyecto"),
+            ("employee", "Empleado"),
+        ),
+    )
+    entity_id = forms.ChoiceField(
+        label="Registro relacionado",
+        required=False,
+        choices=(("", "Selecciona primero el tipo de registro"),),
+    )
+    RELATED_RECORD_MODELS = {
+        "financial_entry": FinancialEntry,
+        "third_party": ThirdParty,
+        "invoice": Invoice,
+        "quote": Quote,
+        "project": Project,
+        "employee": Employee,
+    }
 
     class Meta:
         model = Document
-        fields = ("title", "document_type", "description", "tags", "entity_type", "entity_id")
-        labels = {"title": "Título", "document_type": "Tipo", "description": "Descripción", "tags": "Etiquetas", "entity_type": "Tipo de registro relacionado", "entity_id": "ID relacionado"}
+        fields = ("title", "document_type", "description", "labels")
+        labels = {"title": "Título", "document_type": "Tipo", "description": "Descripción", "labels": "Etiquetas"}
         widgets = {"description": forms.Textarea(attrs={"rows": 3})}
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, business=None, **kwargs):
         super().__init__(*args, **kwargs)
+        self.fields["labels"].queryset = (
+            DocumentTag.objects.filter(business=business) if business else DocumentTag.objects.none()
+        )
+        labels_field = self.fields["labels"]
+        labels_field.widget = forms.CheckboxSelectMultiple(
+            attrs={"class": "document-label-choice"}
+        )
+        labels_field.widget.choices = labels_field.choices
+        selected_type = (
+            self.data.get("entity_type")
+            if self.is_bound
+            else self.instance.entity_type
+        )
+        self.fields["entity_type"].widget.attrs.update({"class": "form-select", "id": "id_entity_type"})
+        self.fields["entity_id"].widget.attrs.update({"class": "form-select", "id": "id_entity_id"})
+        self.related_options = {}
+        for entity_type, model in self.RELATED_RECORD_MODELS.items():
+            queryset = model.objects.all()
+            if model is not ThirdParty and business is not None:
+                queryset = queryset.filter(business=business)
+            records = []
+            for record in queryset.order_by("-pk")[:500]:
+                if entity_type == "financial_entry":
+                    label = f"{record.concept} · {record.entry_date:%d/%m/%Y}"
+                elif entity_type == "invoice":
+                    label = record.invoice_number
+                elif entity_type == "quote":
+                    label = record.quote_number
+                else:
+                    label = str(record)
+                records.append((str(record.pk), label))
+            self.related_options[entity_type] = records
+        self.fields["entity_id"].choices = (
+            ("", "Selecciona un registro"),
+            *self.related_options.get(selected_type, []),
+        )
         for field in self.fields.values():
             field.widget.attrs.setdefault("class", "form-control")
+
+    def clean(self):
+        cleaned = super().clean()
+        entity_type = cleaned.get("entity_type")
+        entity_id = cleaned.get("entity_id")
+        if entity_type and not entity_id:
+            self.add_error("entity_id", "Selecciona el registro relacionado.")
+        if entity_id and not entity_type:
+            self.add_error("entity_type", "Selecciona el tipo de registro.")
+        return cleaned
+
+
+class DocumentTagForm(forms.ModelForm):
+    class Meta:
+        model = DocumentTag
+        fields = ("name",)
+        labels = {"name": "Nombre de la etiqueta"}
+        widgets = {"name": forms.TextInput(attrs={"class": "form-control", "maxlength": 80})}
+
+    def __init__(self, *args, business=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.business = business
+
+    def clean_name(self):
+        name = self.cleaned_data["name"].strip()
+        if DocumentTag.objects.filter(business=self.business, name__iexact=name).exclude(pk=self.instance.pk).exists():
+            raise ValidationError("Ya existe una etiqueta con ese nombre.")
+        return name
 
 
 class DocumentVersionForm(forms.Form):

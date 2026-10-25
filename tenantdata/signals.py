@@ -30,7 +30,7 @@ def publish_financial_entry_created(sender, instance, created, **kwargs):
                 "currency": instance.currency,
                 "entry_type": instance.entry_type,
                 "status": instance.status,
-                "entry_date": instance.entry_date.isoformat(),
+                "entry_date": str(instance.entry_date),
             },
         )
 

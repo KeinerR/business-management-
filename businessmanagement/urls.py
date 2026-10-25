@@ -87,6 +87,18 @@ urlpatterns = [
     path("budgets/<int:budget_id>/edit/", views.budget_edit, name="budget_edit"),
     path("forecast/", views.forecast_dashboard, name="forecast_dashboard"),
     path("documents/", views.document_list, name="document_list"),
+    path("documents/tags/", views.document_tag_list, name="document_tag_list"),
+    path("documents/tags/create/", views.document_tag_create, name="document_tag_create"),
+    path(
+        "documents/tags/<int:tag_id>/edit/",
+        views.document_tag_edit,
+        name="document_tag_edit",
+    ),
+    path(
+        "documents/tags/<int:tag_id>/delete/",
+        views.document_tag_delete,
+        name="document_tag_delete",
+    ),
     path("documents/create/", views.document_create, name="document_create"),
     path("documents/<int:document_id>/", views.document_detail, name="document_detail"),
     path("documents/<int:document_id>/versions/", views.document_add_version, name="document_add_version"),

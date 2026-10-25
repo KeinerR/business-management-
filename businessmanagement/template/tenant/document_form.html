@@ -1,3 +1,68 @@
 {% extends "tenant/base.html" %}
+{% load static %}
 {% block title %}Subir documento | System Manager{% endblock %}
-{% block workspace_content %}<div class="container-fluid py-3"><h2 class="h4">Subir documento</h2><p class="text-muted">Máximo 10 MB. Formatos: PDF, imágenes, Office, TXT y CSV.</p><form method="post" enctype="multipart/form-data" class="card card-body">{% csrf_token %}{% for field in form %}<div class="mb-3"><label class="form-label">{{ field.label }}</label>{{ field }}{% for error in field.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}{% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}</div>{% endfor %}<div><button class="btn btn-primary">Guardar documento</button> <a class="btn btn-outline-secondary" href="{% url 'document_list' %}">Cancelar</a></div></form></div>{% endblock %}
+{% block workspace_content %}
+<div class="container-fluid py-3">
+  <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+    <div>
+      <h2 class="h4">Subir documento</h2>
+      <p class="text-muted">Máximo 10 MB. Formatos: PDF, imágenes, Office, TXT y CSV.</p>
+    </div>
+    <a class="btn btn-outline-secondary" href="{% url 'document_tag_list' %}">Administrar etiquetas</a>
+  </div>
+  <form method="post" enctype="multipart/form-data" class="card card-body">
+    {% csrf_token %}
+    {% for field in form %}
+      <div class="mb-3">
+        <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+        {% if field.name == "labels" %}
+          <div class="document-label-options">
+            {{ field }}
+            <div class="form-text">Marca una o varias etiquetas. Si aún no hay opciones, créalas desde “Administrar etiquetas”.</div>
+          </div>
+        {% else %}
+          {{ field }}
+        {% endif %}
+        {% if field.name == "labels" %}<div class="form-text">Selecciona una o varias etiquetas. Puedes crear y administrar etiquetas por separado.</div>{% endif %}
+        {% for error in field.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}
+        {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+      </div>
+    {% endfor %}
+    <p class="form-text">El selector de registro muestra hasta 500 registros recientes del tipo elegido.</p>
+    <div>
+      <button class="btn btn-primary">Guardar documento</button>
+      <a class="btn btn-outline-secondary" href="{% url 'document_list' %}">Cancelar</a>
+    </div>
+  </form>
+  {{ related_options|json_script:"related-record-options" }}
+</div>
+<script>
+  (() => {
+    const typeSelect = document.getElementById("id_entity_type");
+    const recordSelect = document.getElementById("id_entity_id");
+    const optionsElement = document.getElementById("related-record-options");
+    if (!typeSelect || !recordSelect || !optionsElement) return;
+
+    const relatedOptions = JSON.parse(optionsElement.textContent);
+    const populateRecords = (selectedValue = "") => {
+      const records = relatedOptions[typeSelect.value] || [];
+      recordSelect.replaceChildren(new Option(
+        typeSelect.value ? "Selecciona un registro" : "Selecciona primero el tipo de registro",
+        ""
+      ));
+      for (const [id, label] of records) {
+        recordSelect.add(new Option(label, id, false, id === selectedValue));
+      }
+      recordSelect.disabled = records.length === 0;
+    };
+    typeSelect.addEventListener("change", () => populateRecords());
+    populateRecords(recordSelect.value);
+  })();
+</script>
+<style>
+  .document-label-choice { display: flex; flex-wrap: wrap; gap: .5rem; }
+  .document-label-choice > div { display: flex; align-items: center; }
+  .document-label-choice label { display: inline-flex; align-items: center; gap: .5rem; padding: .5rem .75rem; border: 1px solid var(--sm-line); border-radius: .5rem; cursor: pointer; }
+  .document-label-choice input { margin: 0; }
+</style>
+{% endblock %}

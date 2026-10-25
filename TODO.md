@@ -14,7 +14,8 @@ Referencia: `docs/ESTADO_IMPLEMENTACION.md`. El antiguo checklist de pagos/cotiz
 - [x] Implementar actualización automática de tasas con proveedor y política definidos.
 - [ ] Validar consulta real a `open.er-api.com` después de aplicar el permiso de red guardado en el borrador.
 - [x] PDF de notas débito.
-- [ ] Ampliar pruebas de aislamiento entre tenants, roles y concurrencia.
+- [x] Validar la matriz de habilitación/bloqueo de los 25 módulos, menú, rutas directas, API y roles tenant; validar además el bloqueo de escritura para Solo lectura.
+- [ ] Completar pruebas de aislamiento cross-tenant y concurrencia; la cobertura de permisos/módulos ya añadida no reemplaza esas pruebas.
 
 ## Deuda técnica
 

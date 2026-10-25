@@ -100,7 +100,7 @@
 ## Validación acumulada
 
 - Checks: `docker compose -f compose.yml run --rm --no-deps web python manage.py check`.
-- Suite actual: **53 pruebas**, todas aprobadas con `docker compose -f compose.yml run --rm --no-deps web python manage.py test businessmanagement`.
+- Suite general previa: **53 pruebas** aprobadas; la validación focalizada más reciente de permisos se registra en la sección de módulos por tenant abajo.
 - Verificar migraciones: `docker compose -f compose.yml run --rm --no-deps web python manage.py makemigrations --check --dry-run`.
 - Última migración del bloque documental: `tenantdata/0014_document_documentversion_and_more.py`.
 - Última migración del bloque de importaciones: `tenantdata/0015_importbatch_confirmed_at_importbatch_rolled_back_at_and_more.py`.
@@ -140,8 +140,20 @@ Los pendientes de forecast multimoneda, tasas automáticas y PDF de nota débito
 - Conversión compartida con COP como base y fecha exacta por pago; forecast multimoneda con avisos ante tasas faltantes.
 - Sincronización diaria de tasas de referencia USD/EUR por Celery, preservando tasas manuales y aislamiento por tenant. Falta confirmar consulta externa después de aplicar acceso a `open.er-api.com`; no se declara validada en vivo.
 - PDF de nota débito y plantillas de listado/detalle con descarga autenticada y auditoría.
-- Suite vigente: 53 pruebas aprobadas. No hay cambios de modelos ni migraciones nuevas.
+- No hay cambios de modelos ni migraciones nuevas en la validación de permisos descrita abajo.
 - Operación, límites y evidencia: [CURRENCY_AND_DEBIT_NOTES.md](CURRENCY_AND_DEBIT_NOTES.md).
+
+## Validación de módulos y permisos por tenant — 24 de octubre de 2026
+
+- Se verificaron los 25 módulos registrados en `businessmanagement/modules.py`: cada ruta principal de módulo declara y aplica el módulo requerido; el sidebar muestra sus enlaces únicamente si están habilitados.
+- El dashboard y la navegación no exponen enlaces de módulos apagados. Los ajustes `/settings/modules/` siguen siendo informativos para el administrador de empresa y no habilitan cambios de configuración de plataforma.
+- Se eliminó el bypass de las protecciones de módulo y rol para superusuarios dentro del tenant. El rol administrador se determina por grupo tenant; Operador financiero y Solo lectura no obtienen permisos de administración por ser cuentas privilegiadas de Django.
+- Se corrigieron asociaciones incorrectas: facturas dependen de `invoices`, cotizaciones de `quotes`, auditoría de `audit`, edición de proyectos de `projects` y plan contable solo de `chart_accounts`. Convertir una cotización a factura requiere ambos módulos; banking, extractos y conciliaciones conservan permisos independientes.
+- Las APIs históricas de movimientos, terceros y tasas, así como los ViewSets v1 de movimientos, terceros y webhooks, rechazan solicitudes cuando su módulo está deshabilitado. Los writes siguen sujetos a autenticación tenant y grupos autorizados.
+- El dashboard limita consultas y datos mostrados según los módulos habilitados; el contexto no carga notificaciones cuando su módulo está apagado.
+- Se añadieron pruebas para la matriz de los 25 módulos, menú, rutas directas, API, superusuarios tenant, operador y rol Solo lectura.
+- Validación ejecutada en Docker: `manage.py check` sin problemas; los 58 tests de `BusinessFlowTests` pasaron. También pasaron pruebas focalizadas de permisos para API y rol Solo lectura. `git diff --check` sin errores y `/health/` respondió HTTP 200.
+- La consulta externa real de tasas, staging HTTPS, aislamiento exhaustivo entre tenants y concurrencia siguen pendientes; estas pruebas no se presentan como validadas por la matriz de módulos.
 
 ## Mejora visual de interfaces
 

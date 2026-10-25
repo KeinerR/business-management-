@@ -3,6 +3,8 @@ import re
 
 from django.conf import settings
 from django.db import models
+from django.contrib.contenttypes.fields import GenericForeignKey
+from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.utils.text import get_valid_filename
 from uuid import uuid4
@@ -1280,6 +1282,22 @@ def document_version_upload_to(instance, filename):
     return f"documents/{instance.document_id}/{uuid4().hex}-{safe_name}"
 
 
+class DocumentTag(models.Model):
+    business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name="document_tags")
+    name = models.CharField(max_length=80)
+
+    class Meta:
+        ordering = ("name",)
+        constraints = [
+            models.UniqueConstraint(fields=("business", "name"), name="unique_document_tag_per_business")
+        ]
+        verbose_name = "Etiqueta documental"
+        verbose_name_plural = "Etiquetas documentales"
+
+    def __str__(self):
+        return self.name
+
+
 class Document(models.Model):
     INVOICE = "invoice"
     QUOTE = "quote"
@@ -1302,12 +1320,21 @@ class Document(models.Model):
     STATUS_CHOICES = ((ACTIVE, "Activo"), (ARCHIVED, "Archivado"))
 
     business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name="documents")
+    labels = models.ManyToManyField(DocumentTag, blank=True, related_name="documents")
     title = models.CharField(max_length=220)
     document_type = models.CharField(max_length=20, choices=TYPE_CHOICES, default=OTHER)
     description = models.TextField(blank=True)
     tags = models.CharField(max_length=300, blank=True, help_text="Etiquetas separadas por comas")
     entity_type = models.CharField(max_length=50, blank=True)
     entity_id = models.PositiveBigIntegerField(null=True, blank=True)
+    content_type = models.ForeignKey(
+        ContentType,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="related_documents",
+    )
+    related_object = GenericForeignKey("content_type", "entity_id")
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=ACTIVE)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="documents_created")
     created_at = models.DateTimeField(auto_now_add=True)

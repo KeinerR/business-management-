@@ -1,0 +1,39 @@
+{% extends "tenant/base.html" %}
+{% block title %}Notas de crédito | System Manager{% endblock %}
+{% block workspace_content %}
+<div class="container-fluid py-3">
+  <div class="d-flex justify-content-between align-items-center gap-3 mb-3">
+    <div><h2 class="h4 mb-1">Notas de crédito</h2><p class="text-secondary mb-0">Consulta y administra ajustes de facturación.</p></div>
+    {% if is_tenant_admin or is_financial_operator %}<a class="btn btn-primary" href="{% url 'credit_note_create' %}">Nueva nota de crédito</a>{% endif %}
+  </div>
+  <form method="get" class="row g-2 align-items-end mb-3">
+    <div class="col-md-4"><label class="form-label" for="credit-status">Estado</label><select class="form-select" id="credit-status" name="status"><option value="">Todos</option>{% for value,label in status_choices %}<option value="{{ value }}" {% if selected_status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+    <div class="col-md-6"><label class="form-label" for="credit-invoice">Factura</label><select class="form-select" id="credit-invoice" name="invoice"><option value="">Todas</option>{% for invoice in invoice_choices %}<option value="{{ invoice.id }}" {% if selected_invoice == invoice.id|stringformat:"s" %}selected{% endif %}>{{ invoice.invoice_number }}</option>{% endfor %}</select></div>
+    <div class="col-md-2"><button class="btn btn-outline-primary w-100">Filtrar</button></div>
+  </form>
+  <div class="table-responsive panel-card">
+    <table class="table table-hover align-middle mb-0">
+      <thead><tr><th>Número</th><th>Fecha</th><th>Tercero</th><th>Factura</th><th>Total</th><th>Estado</th><th>Acciones</th></tr></thead>
+      <tbody>
+        {% for note in credit_notes %}
+          <tr>
+            <td>{{ note.credit_note_number }}</td><td>{{ note.issue_date|date:"d/m/Y" }}</td>
+            <td>{{ note.third_party.name|default:"—" }}</td><td>{{ note.invoice.invoice_number|default:"—" }}</td>
+            <td>{{ note.total|floatformat:2 }} {{ note.currency }}</td><td>{{ note.get_status_display }}</td>
+            <td><a class="btn btn-sm btn-outline-primary" href="{% url 'credit_note_detail' note.id %}">Ver</a></td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="7" class="text-center text-secondary py-4">No hay notas de crédito registradas.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if credit_notes.has_other_pages %}
+    <nav class="mt-3" aria-label="Paginación">
+      {% if credit_notes.has_previous %}<a class="btn btn-sm btn-outline-secondary" href="?page={{ credit_notes.previous_page_number }}&amp;status={{ selected_status|urlencode }}&amp;invoice={{ selected_invoice|urlencode }}">Anterior</a>{% endif %}
+      <span class="mx-2">Página {{ credit_notes.number }} de {{ credit_notes.paginator.num_pages }}</span>
+      {% if credit_notes.has_next %}<a class="btn btn-sm btn-outline-secondary" href="?page={{ credit_notes.next_page_number }}&amp;status={{ selected_status|urlencode }}&amp;invoice={{ selected_invoice|urlencode }}">Siguiente</a>{% endif %}
+    </nav>
+  {% endif %}
+</div>
+{% endblock %}

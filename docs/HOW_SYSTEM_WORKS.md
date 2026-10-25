@@ -20,4 +20,4 @@ En desarrollo usar explícitamente `compose.yml`; en producción `compose.produc
 
 El comando `create_demo_tenant` crea un usuario con contraseña conocida y solo debe usarse en demos aisladas; el entorno cloud preparado no lo ejecuta. La configuración de desarrollo usa `ensure_dev_tenants` para preparar dominios y módulos sin crear ese usuario.
 
-Las 53 pruebas actuales cubren regresiones representativas; faltan validación completa de aislamiento/roles en staging, restauración de backups e integraciones HTTPS reales. Ver la guía de aceptación antes de operar con datos reales.
+La matriz de permisos tenant cubre los 25 módulos, el menú, las rutas, las APIs y los roles; los 58 tests de `BusinessFlowTests` pasaron en la última validación, junto con pruebas focalizadas de solo lectura. Aún faltan pruebas exhaustivas de aislamiento entre tenants y concurrencia, staging HTTPS, restauración de backups e integraciones HTTPS reales. Ver la guía de aceptación antes de operar con datos reales.

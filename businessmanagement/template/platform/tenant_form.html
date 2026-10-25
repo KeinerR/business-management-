@@ -270,6 +270,18 @@
     padding: 1.5rem;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
   }
+  :root[data-theme="dark"] .platform-card {
+    background: var(--sm-surface);
+    color: var(--sm-ink);
+  }
+  :root[data-theme="dark"] .platform-card .form-label,
+  :root[data-theme="dark"] .platform-card .form-check-label {
+    color: var(--sm-ink);
+  }
+  :root[data-theme="dark"] .platform-card .bg-light {
+    background-color: var(--sm-panel) !important;
+    color: var(--sm-ink);
+  }
   .form-check-input:checked {
     background-color: var(--sm-brand);
     border-color: var(--sm-brand);

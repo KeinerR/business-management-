@@ -118,7 +118,7 @@ def _rows_from_uploaded_file(uploaded, delimiter=","):
 
 @login_required
 @tenant_required
-@module_enabled_required("banking")
+@module_enabled_required("bank_statements")
 @tenant_group_required("Administrador de empresa", "Operador financiero")
 def bank_statement_import_csv(request):
     if request.method != "POST":
@@ -236,12 +236,14 @@ def bank_statement_import_csv(request):
         f"Extracto {statement_name}: {imported_count} transacciones importadas, "
         f"{discarded_count} filas descartadas.",
     )
-    return redirect("bank_transaction_suggestions", statement_id=statement.pk)
+    if request.tenant.is_module_enabled("reconciliations"):
+        return redirect("bank_transaction_suggestions", statement_id=statement.pk)
+    return redirect("bank_statement_list")
 
 
 @login_required
 @tenant_required
-@module_enabled_required("banking")
+@module_enabled_required("reconciliations")
 @tenant_group_required("Administrador de empresa", "Operador financiero")
 def bank_transaction_suggestions(request, statement_id: int):
     statement = BankStatement.objects.filter(pk=statement_id).first()
@@ -336,7 +338,7 @@ def bank_transaction_suggestions(request, statement_id: int):
 
 @login_required
 @tenant_required
-@module_enabled_required("banking")
+@module_enabled_required("reconciliations")
 @tenant_group_required("Administrador de empresa", "Operador financiero")
 def reconciliation_manual(request, transaction_id: int):
     bank_tx = BankTransaction.objects.select_related("statement").filter(
@@ -409,7 +411,7 @@ def _confirm_reconciliation(rec, user):
 
 @login_required
 @tenant_required
-@module_enabled_required("banking")
+@module_enabled_required("reconciliations")
 @tenant_group_required("Administrador de empresa", "Operador financiero")
 def reconciliation_bulk_confirm(request, statement_id: int):
     if request.method != "POST":
@@ -435,7 +437,7 @@ def reconciliation_bulk_confirm(request, statement_id: int):
 
 @login_required
 @tenant_required
-@module_enabled_required("banking")
+@module_enabled_required("reconciliations")
 @tenant_group_required("Administrador de empresa", "Operador financiero")
 def reconciliation_confirm(request, rec_id: int):
     rec = Reconciliation.objects.filter(pk=rec_id).first()
