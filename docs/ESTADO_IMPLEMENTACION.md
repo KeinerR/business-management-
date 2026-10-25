@@ -84,7 +84,7 @@
 
 ## Fase 5 — avances
 
-- Navegación tenant agrupada por dominio, filtrada por módulos habilitados y con indicador de sección activa.
+- Navegación tenant agrupada por dominio, filtrada por módulos habilitados y con indicador de sección activa; conserva abierta la última sección usada por tenant entre páginas.
 - Breadcrumbs, enlace para saltar al contenido, control accesible de tema claro/oscuro y soporte responsive del panel lateral.
 - Landing pública comercial con explicación de funcionalidades y públicos, llamadas a iniciar sesión e ilustración conceptual sin métricas ni operaciones de clientes; se añadieron pruebas para impedir la reaparición de datos de muestra.
 - Navegación desde Inicio dirigida al dashboard tenant o de plataforma según el contexto y los permisos; los usuarios autenticados en el dominio público no reciben enlaces que los envíen al dashboard tenant.

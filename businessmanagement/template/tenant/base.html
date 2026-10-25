@@ -151,7 +151,7 @@
     </p>
 
     <button id="tenant-menu-toggle" class="btn btn-outline-primary d-lg-none mb-2" type="button" data-bs-toggle="collapse" data-bs-target="#tenant-navigation" aria-controls="tenant-navigation" aria-expanded="false">Menú de trabajo</button>
-    <nav id="tenant-navigation" class="collapse d-lg-block" aria-label="Módulos de la empresa">
+    <nav id="tenant-navigation" class="collapse d-lg-block" aria-label="Módulos de la empresa" data-tenant-schema="{{ request.tenant.schema_name }}">
     <a class="sidebar-link" href="{% url 'dashboard' %}" {% if request.resolver_match.url_name == "dashboard" %}aria-current="page"{% endif %}>
       <span>Resumen</span><small>Inicio</small>
     </a>
@@ -166,7 +166,7 @@
     {% endif %}
 
     {% if "finances" in request.tenant.enabled_modules or "categories" in request.tenant.enabled_modules or "chart_accounts" in request.tenant.enabled_modules or "budget" in request.tenant.enabled_modules or "cartera" in request.tenant.enabled_modules or "payments" in request.tenant.enabled_modules or "banking" in request.tenant.enabled_modules or "bank_statements" in request.tenant.enabled_modules or "reconciliations" in request.tenant.enabled_modules or "currency_rates" in request.tenant.enabled_modules %}
-    <details class="sidebar-group" open>
+    <details class="sidebar-group" data-sidebar-section="finances">
       <summary>Finanzas y banca</summary>
       {% if "finances" in request.tenant.enabled_modules %}
       <a class="sidebar-link" href="{% url 'financial_entry_list' %}" {% if request.resolver_match.url_name == "financial_entry_list" %}aria-current="page"{% endif %}><span>Movimientos</span><small>Finanzas</small></a>
@@ -204,7 +204,7 @@
     {% endif %}
 
     {% if "invoices" in request.tenant.enabled_modules or "quotes" in request.tenant.enabled_modules or "credit_notes" in request.tenant.enabled_modules or "debit_notes" in request.tenant.enabled_modules or "taxes" in request.tenant.enabled_modules or "third_parties" in request.tenant.enabled_modules or "projects" in request.tenant.enabled_modules %}
-    <details class="sidebar-group" open>
+    <details class="sidebar-group" data-sidebar-section="commercial">
       <summary>Comercial y CRM</summary>
       {% if "quotes" in request.tenant.enabled_modules %}
       <a class="sidebar-link" href="{% url 'quote_list' %}" {% if request.resolver_match.url_name == "quote_list" or request.resolver_match.url_name == "quote_detail" %}aria-current="page"{% endif %}><span>Cotizaciones</span><small>Ventas</small></a>
@@ -231,7 +231,7 @@
     {% endif %}
 
     {% if "documents" in request.tenant.enabled_modules or "import_batch" in request.tenant.enabled_modules or "employees" in request.tenant.enabled_modules or is_tenant_admin and "users" in request.tenant.enabled_modules or is_tenant_admin and "groups" in request.tenant.enabled_modules or is_tenant_admin and "audit" in request.tenant.enabled_modules %}
-    <details class="sidebar-group">
+    <details class="sidebar-group" data-sidebar-section="tools">
       <summary>Herramientas y equipo</summary>
       {% if "documents" in request.tenant.enabled_modules %}
       <a class="sidebar-link" href="{% url 'document_list' %}" {% if request.resolver_match.url_name == "document_list" or request.resolver_match.url_name == "document_detail" %}aria-current="page"{% endif %}><span>Documentos</span><small>Versiones</small></a>
@@ -276,4 +276,60 @@
     {% block workspace_content %}{% endblock %}
   </section>
 </div>
+{% endblock %}
+{% block extra_js %}
+<script>
+  (() => {
+    const navigation = document.getElementById("tenant-navigation");
+    if (!navigation) return;
+
+    const sections = Array.from(
+      navigation.querySelectorAll("[data-sidebar-section]")
+    );
+    if (!sections.length) return;
+
+    const storageKey = `systemmanager-sidebar:${navigation.dataset.tenantSchema}`;
+    const activeSection = navigation
+      .querySelector('.sidebar-link[aria-current="page"]')
+      ?.closest("[data-sidebar-section]");
+    let rememberedSection;
+    try {
+      rememberedSection = window.sessionStorage.getItem(storageKey);
+    } catch (_) {}
+
+    const initialSection =
+      activeSection ||
+      sections.find((section) => section.dataset.sidebarSection === rememberedSection) ||
+      sections[0];
+
+    sections.forEach((section) => {
+      section.open = section === initialSection;
+    });
+    try {
+      window.sessionStorage.setItem(storageKey, initialSection.dataset.sidebarSection);
+    } catch (_) {}
+
+    sections.forEach((section) => {
+      section.addEventListener("toggle", () => {
+        if (section.open) {
+          sections.forEach((otherSection) => {
+            if (otherSection !== section) otherSection.open = false;
+          });
+          try {
+            window.sessionStorage.setItem(storageKey, section.dataset.sidebarSection);
+          } catch (_) {}
+        } else {
+          try {
+            if (
+              window.sessionStorage.getItem(storageKey) ===
+              section.dataset.sidebarSection
+            ) {
+              window.sessionStorage.removeItem(storageKey);
+            }
+          } catch (_) {}
+        }
+      });
+    });
+  })();
+</script>
 {% endblock %}

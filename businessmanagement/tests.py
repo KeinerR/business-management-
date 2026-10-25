@@ -665,6 +665,33 @@ class BusinessFlowTests(TenantTestCase):
         self.assertEqual(settings_response.url, "/dashboard/")
         self.assertEqual(api_response.status_code, 403)
 
+    def test_sidebar_sections_restore_the_last_open_group(self):
+        self.tenant.enabled_modules = [
+            "finances",
+            "third_parties",
+            "employees",
+            "documents",
+        ]
+        self.tenant.save(update_fields=["enabled_modules"])
+        user = get_user_model().objects.create_user(username="sidebar-state-admin")
+        group, _ = Group.objects.get_or_create(name="Administrador de empresa")
+        user.groups.add(group)
+        client = APIClient(HTTP_HOST=self.domain.domain)
+        client.force_login(user)
+
+        response = client.get("/dashboard/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            f'data-tenant-schema="{self.tenant.schema_name}"',
+        )
+        self.assertContains(response, 'data-sidebar-section="finances"')
+        self.assertContains(response, 'data-sidebar-section="commercial"')
+        self.assertContains(response, 'data-sidebar-section="tools"')
+        self.assertContains(response, "window.sessionStorage.setItem")
+        self.assertNotContains(response, '<details class="sidebar-group" open>')
+
     def test_disabled_modules_block_corresponding_api_endpoints(self):
         self.tenant.enabled_modules = []
         self.tenant.save(update_fields=["enabled_modules"])
